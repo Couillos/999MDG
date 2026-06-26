@@ -149,16 +149,24 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
     if (sum_neg < 0.0) m.omega_ratio_usd = sum_pos / (-sum_neg);
 
     // Gain / loss ratios
-    double spa = 0.0, sna = 0.0, spl = 0.0, sns = 0.0;
+    double spa = 0.0, sna = 0.0;
+    double spl = 0.0, snl = 0.0;
+    double sps = 0.0, sns = 0.0;
     for (size_t i = 1; i < equity_curve.size(); ++i) {
         double const ch = equity_curve[i].equity - equity_curve[i - 1].equity;
-        if (ch > 0.0) { spa += ch; spl += ch; }
-        else { sna += ch; sns += ch; }
+        double const exp = equity_curve[i].exposure_usd;
+        if (ch > 0.0) {
+            spa += ch;
+            if (exp > 0.0) spl += ch; else sps += ch;
+        } else {
+            sna += ch;
+            if (exp > 0.0) snl += ch; else sns += ch;
+        }
     }
     m.gain_usd = spa;
     if (sna < 0.0) m.loss_profit_ratio = spa / (-sna);
-    if (sns < 0.0) m.loss_profit_ratio_long = spl / (-sns);
-    if (sns < 0.0) m.loss_profit_ratio_short = spl / (-sns);
+    if (snl < 0.0) m.loss_profit_ratio_long = spl / (-snl);
+    if (sns < 0.0) m.loss_profit_ratio_short = sps / (-sns);
 
     // Expected shortfall 1%
     if (d_ret.size() >= 100) {
@@ -320,8 +328,8 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
         }
         double const el = cnt_long > 0 ? exp_long / static_cast<double>(cnt_long) : 0.0;
         double const es = cnt_short > 0 ? exp_short / static_cast<double>(cnt_short) : 0.0;
-        if (el > 0.0) { m.adg_per_exposure_long_usd = mean_ret / el; m.mdg_per_exposure_long_usd = med_ret / el; m.gain_per_exposure_long_usd = spl / el; }
-        if (es > 0.0) { m.adg_per_exposure_short_usd = mean_ret / es; m.mdg_per_exposure_short_usd = med_ret / es; m.gain_per_exposure_short_usd = sns / es; }
+        if (el > 0.0) { m.adg_per_exposure_long_usd = mean_ret / el; m.mdg_per_exposure_long_usd = med_ret / el; m.gain_per_exposure_long_usd = m.gain_usd / el; }
+        if (es > 0.0) { m.adg_per_exposure_short_usd = mean_ret / es; m.mdg_per_exposure_short_usd = med_ret / es; m.gain_per_exposure_short_usd = m.gain_usd / es; }
     }
 
     // Entry initial balance %

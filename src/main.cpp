@@ -4,6 +4,7 @@
 #include "data/symbol_info.h"
 #include "metrics/calculator.h"
 #include "optimizer/optimizer.h"
+#include "plot/plotter.h"
 #include "strategy/strategy.h"
 #include <algorithm>
 #include <chrono>
@@ -188,6 +189,10 @@ static void run_backtest(Config const& cfg) {
     std::string const json_path = res_dir + "/analysis.json";
     write_analysis_json(json_path, metrics, cfg, result.equity_curve);
     std::printf("  Wrote %s\n", json_path.c_str());
+
+    std::printf("Generating charts...\n");
+    Plotter plotter(cfg, result.equity_curve, res_dir);
+    plotter.generate_all();
 
     if (!result.equity_curve.empty()) {
         auto const& first = result.equity_curve.front();

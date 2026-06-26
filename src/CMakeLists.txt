@@ -4,6 +4,7 @@ set(MARTINGALE_SOURCES
     data/symbol_info.cpp
     data/cache.cpp
     data/candle_manager.cpp
+    plot/plotter.cpp
     strategy/entry_grid.cpp
     strategy/close_grid.cpp
     strategy/stop_loss.cpp

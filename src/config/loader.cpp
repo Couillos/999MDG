@@ -1,7 +1,9 @@
 #include "loader.h"
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <regex>
 #include <simdjson.h>
 #include <string>
 #include <vector>
@@ -202,18 +204,53 @@ Config load_config(const std::string& path, Mode mode) {
         if (cfg.symbols.empty()) {
             fatal("At least one symbol is required");
         }
+        for (const auto& sym : cfg.symbols) {
+            if (!std::regex_match(sym, std::regex("^[A-Z]{2,10}USDT$"))) {
+                std::fprintf(stderr, "Config error: invalid symbol '%s' (must match ^[A-Z]{2,10}USDT$)\n", sym.c_str());
+                std::exit(1);
+            }
+        }
     }
 
-    cfg.timeframe              = req_str(root, "timeframe");
-    cfg.date_from              = req_str(root, "date_from");
-    cfg.date_to                = req_str(root, "date_to");
-    cfg.initial_balance_usd    = req_f64(root, "initial_balance_usd");
-    cfg.total_wallet_exposure  = req_f64(root, "total_wallet_exposure");
+    cfg.timeframe = req_str(root, "timeframe");
+    {
+        static const char* valid_tfs[] = {"1m","5m","15m","30m","1h","4h","12h","1d"};
+        bool ok = false;
+        for (auto tf : valid_tfs) { if (cfg.timeframe == tf) { ok = true; break; } }
+        if (!ok) {
+            std::fprintf(stderr, "Config error: invalid timeframe '%s'\n", cfg.timeframe.c_str());
+            std::exit(1);
+        }
+    }
+
+    cfg.date_from = req_str(root, "date_from");
+    cfg.date_to   = req_str(root, "date_to");
+    if (!std::regex_match(cfg.date_from, std::regex("^\\d{4}-\\d{2}-\\d{2}$")) ||
+        !std::regex_match(cfg.date_to,   std::regex("^\\d{4}-\\d{2}-\\d{2}$"))) {
+        fatal("date_from and date_to must be YYYY-MM-DD");
+    }
+
+    cfg.initial_balance_usd   = req_f64(root, "initial_balance_usd");
+    if (cfg.initial_balance_usd < 1.0) fatal("initial_balance_usd must be >= 1");
+    cfg.total_wallet_exposure = req_f64(root, "total_wallet_exposure");
+    if (cfg.total_wallet_exposure < 0.1) fatal("total_wallet_exposure must be >= 0.1");
 
     // strategy
     {
         auto strat_obj = req_obj(root, "strategy");
         cfg.strategy = parse_strategy(strat_obj);
+        // validate strategy param ranges
+        if (cfg.strategy.entry_ema_period < 2) fatal("entry_ema_period must be >= 2");
+        if (cfg.strategy.entry_ema_distance_pct < 0.0) fatal("entry_ema_distance_pct must be >= 0");
+        if (cfg.strategy.entry_grid_spacing_pct < 0.0) fatal("entry_grid_spacing_pct must be >= 0");
+        if (cfg.strategy.initial_qty_pct < 0.0 || cfg.strategy.initial_qty_pct > 1.0) fatal("initial_qty_pct must be in [0, 1]");
+        if (cfg.strategy.double_down_factor < 0.0) fatal("double_down_factor must be >= 0");
+        if (cfg.strategy.close_grid_spacing_pct < 0.0) fatal("close_grid_spacing_pct must be >= 0");
+        if (cfg.strategy.close_grid_count < 1) fatal("close_grid_count must be >= 1");
+        if (cfg.strategy.sl_upnl_pct > 0.0) fatal("sl_upnl_pct must be <= 0");
+        if (cfg.strategy.n_positions < 1) fatal("n_positions must be >= 1");
+        if (cfg.strategy.parkinson_volatility_span < 2) fatal("parkinson_volatility_span must be >= 2");
+        if (cfg.strategy.maker_fee_pct < 0.0 || cfg.strategy.maker_fee_pct > 1.0) fatal("maker_fee_pct must be in [0, 1]");
     }
 
     // optimize (only parse in OPTIMIZE mode to avoid wasted work)

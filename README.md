@@ -63,9 +63,14 @@ Results go under the directory specified by `output.dir` in the config (default:
 | File | Contents |
 |---|---|
 | `analysis.json` | Input config + 37 computed metrics (Sharpe, Sortino, Calmar, ADG, MDG, drawdown, recovery, exposure ratios, etc.) |
+| `equity_chart.png` | Equity (green) + Balance (blue dashed) curves over time |
+| `exposure_chart.png` | Total capital exposure over time with initial balance reference |
+| `pnl_per_symbol.png` | Cumulative PnL per symbol, one colored curve per coin |
 | `data/equity_curve.csv` | `timestamp,equity,balance` |
 | `data/exposure.csv` | `timestamp,exposure_usd` |
 | `data/pnl_symbol.csv` | `timestamp,symbol1,symbol2,...` |
+
+Charts are generated via **gnuplot** with a dark theme. Requires `gnuplot` on the system (see `scripts/install_gnuplot.sh`).
 
 ### Optimizer output: `results/optimize/YYYY-MM-DD_HH-MM-SS/`
 
