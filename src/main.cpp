@@ -467,32 +467,34 @@ int main(int argc, char** argv) {
         std::string const base = cfg.output.dir;
 
         std::map<std::string, double> best_params;
+        // 1) Try most recent _pareto.json
         if (!read_pareto_best(base, best_params)) {
-            // Fallback: try live state
-            std::string const live_state = base + "/optimize/.live_state";
-            simdjson::padded_string json_data;
-            if (!simdjson::padded_string::load(live_state).get(json_data)) {
-                simdjson::ondemand::parser parser;
+            // 2) Try .live_state — pick entry with LOWEST constraint_violation
+            std::string const live_path = base + "/optimize/.live_state";
+            simdjson::padded_string j;
+            if (!simdjson::padded_string::load(live_path).get(j)) {
+                simdjson::ondemand::parser p;
                 simdjson::ondemand::document doc;
-                if (!parser.iterate(json_data).get(doc)) {
+                if (!p.iterate(j).get(doc)) {
                     simdjson::ondemand::object root;
-                    if (!doc.get_object().get(root)) {
-                        simdjson::ondemand::array top_arr;
-                        if (!root["top"].get_array().get(top_arr)) {
-                            for (auto elem : top_arr) {
-                                simdjson::ondemand::object ro;
-                                if (elem.get_object().get(ro)) continue;
-                                double cv = 0.0;
-                                if (!ro["constraint_violation"].get_double().get(cv) && cv > 1e-10) continue;
-                                simdjson::ondemand::object params_obj;
-                                if (ro["params"].get_object().get(params_obj)) continue;
-                                for (auto pf : params_obj) {
-                                    std::string_view pk;
-                                    if (pf.unescaped_key().get(pk)) continue;
-                                    double pv;
-                                    if (!pf.value().get_double().get(pv))
-                                        best_params[std::string(pk)] = pv;
-                                }
+                    simdjson::ondemand::array top_arr;
+                    if (!doc.get_object().get(root) && !root["top"].get_array().get(top_arr)) {
+                        double best_cv = 1e99;
+                        for (auto elem : top_arr) {
+                            simdjson::ondemand::object ro;
+                            if (elem.get_object().get(ro)) continue;
+                            double cv = 1e99;
+                            if (!ro["constraint_violation"].get_double().get(cv) && cv > best_cv) continue;
+                            simdjson::ondemand::object params_obj;
+                            if (ro["params"].get_object().get(params_obj)) continue;
+                            best_cv = cv;
+                            best_params.clear();
+                            for (auto pf : params_obj) {
+                                std::string_view pk;
+                                if (pf.unescaped_key().get(pk)) continue;
+                                double pv;
+                                if (!pf.value().get_double().get(pv))
+                                    best_params[std::string(pk)] = pv;
                             }
                         }
                     }
@@ -501,11 +503,11 @@ int main(int argc, char** argv) {
         }
 
         if (best_params.empty()) {
-            std::fprintf(stderr, "No optimization results found. Run 'optimize' first.\n");
+            std::fprintf(stderr, "No optimization results yet — run 'optimize' first.\n");
             return 1;
         }
 
-        std::printf("Best params from most recent optimization:\n");
+        std::printf("Backtesting best candidate from most recent optimization:\n");
         for (const auto& [k, v] : best_params) {
             std::printf("  %s = %.4f\n", k.c_str(), v);
         }
