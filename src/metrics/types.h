@@ -9,8 +9,10 @@ struct Metrics {
     double adg_per_exponential_fit_error_usd = 0.0;
     double adg_per_exposure_long_usd = 0.0;
     double adg_per_exposure_short_usd = 0.0;
+    double adg_smoothed = 0.0;
     double calmar_ratio_usd = 0.0;
     double drawdown_worst = 0.0;
+    double drawdown_worst_mean_1pct = 0.0;
     double entry_initial_balance_pct_long = 0.0;
     double entry_initial_balance_pct_short = 0.0;
     double equity_balance_diff_neg_max_usd = 0.0;
@@ -40,7 +42,7 @@ struct Metrics {
     double positions_held_per_day = 0.0;
     double sharpe_ratio_usd = 0.0;
     double sortino_ratio_usd = 0.0;
-    double sterling_ratio_usd = 0.0;
+    double sterling_ratio = 0.0;
     double volume_pct_per_day_avg = 0.0;
 };
 

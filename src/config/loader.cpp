@@ -127,8 +127,36 @@ OptimizeConfig parse_optimize(simdjson::ondemand::object opt) {
             }
             ScoringMetric sm{};
             sm.metric = req_str(so, "metric");
-            sm.weight = req_f64(so, "weight");
+            // Parse goal (optional) and weight (optional)
+            std::string_view goal_sv;
+            bool has_goal = !so["goal"].get_string().get(goal_sv);
+            sm.weight = opt_f64(so, "weight", 1.0);
+            if (has_goal) {
+                sm.goal = std::string(goal_sv);
+                // weight is importance only; abs it
+                if (sm.weight < 0) sm.weight = -sm.weight;
+            } else {
+                // Backward compat: infer goal from weight sign
+                sm.goal = (sm.weight < 0) ? "max" : ((sm.weight > 0) ? "min" : "max");
+                sm.weight = std::abs(sm.weight);
+            }
+            if (sm.weight == 0.0) sm.weight = 1.0;
+            sm.engine_sign = (sm.goal == "max") ? -1.0 : 1.0;
             oc.scoring.push_back(sm);
+        }
+    }
+
+    // ga
+    {
+        simdjson::ondemand::object ga_obj;
+        if (!opt["ga"].get_object().get(ga_obj)) {
+            oc.ga.population_size  = static_cast<int>(opt_f64(ga_obj, "population_size", 100.0));
+            oc.ga.n_generations    = static_cast<int>(opt_f64(ga_obj, "n_generations", 50.0));
+            oc.ga.crossover_prob   = opt_f64(ga_obj, "crossover_prob", 0.8);
+            oc.ga.crossover_eta    = opt_f64(ga_obj, "crossover_eta", 15.0);
+            oc.ga.mutation_prob    = opt_f64(ga_obj, "mutation_prob", 0.2);
+            oc.ga.mutation_eta     = opt_f64(ga_obj, "mutation_eta", 20.0);
+            oc.ga.mutation_indpb   = opt_f64(ga_obj, "mutation_indpb", 0.1);
         }
     }
 

@@ -45,10 +45,24 @@ struct Limit {
     double max;
 };
 
-/// A metric name and its weight in scoring.
+/// A metric name, its goal ("min" or "max"), and its importance weight.
+/// engine_sign = -1.0 for "max", +1.0 for "min".
 struct ScoringMetric {
     std::string metric;
-    double weight;
+    double weight = 1.0;
+    std::string goal = "max";
+    double engine_sign = -1.0; // -1 for max, +1 for min
+};
+
+/// Parameters for the NSGA-II genetic algorithm.
+struct GAParams {
+    int population_size = 100;
+    int n_generations = 50;
+    double crossover_prob = 0.8;
+    double crossover_eta = 15.0;
+    double mutation_prob = 0.2;
+    double mutation_eta = 20.0;
+    double mutation_indpb = 0.1;
 };
 
 /// Configuration for the optimizer (only used in OPTIMIZE mode).
@@ -58,6 +72,7 @@ struct OptimizeConfig {
     std::map<std::string, Limit> limits;
     std::vector<ScoringMetric> scoring;
     std::map<std::string, std::array<double, 3>> bounds;
+    GAParams ga;
 };
 
 /// Top-level configuration deserialized from the JSON config file.

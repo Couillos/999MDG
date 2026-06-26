@@ -1,29 +1,36 @@
 #include "optimizer.h"
 #include "metrics/calculator.h"
+#include "optimizer/nsga2.h"
 #include "strategy/strategy.h"
 #include "utils/thread_pool.h"
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <mutex>
 #include <random>
 #include <string>
+#include <unordered_set>
 #include <vector>
 #include <zstd.h>
 
 namespace martingale {
 namespace {
 
+// ---------------------------------------------------------------------------
+// Existing helpers
+// ---------------------------------------------------------------------------
+
 bool is_int_param(const std::string& name) {
     return name == "entry_ema_period"
         || name == "close_grid_count"
         || name == "n_positions"
-        || name == "parkinson_volatility_span";
+        || name == "parkinson_volatility_span"
+        || name == "time_based_unstuck_age";
 }
 
 std::vector<double> axis_values(const std::string& name,
@@ -89,8 +96,11 @@ std::vector<ParamAxis> build_axes(
     return axes;
 }
 
-void apply_params(Config& cfg, const ParamAxis& axis, double value) {
-    auto const& name = axis.name;
+// ---------------------------------------------------------------------------
+// apply_param_to_cfg — handles ALL strategy parameters including time_based_*
+// ---------------------------------------------------------------------------
+
+void apply_param_to_cfg(Config& cfg, const std::string& name, double value) {
     if (name == "entry_ema_period") {
         cfg.strategy.entry_ema_period = static_cast<int>(value);
     } else if (name == "entry_ema_distance_pct") {
@@ -115,16 +125,28 @@ void apply_params(Config& cfg, const ParamAxis& axis, double value) {
         cfg.strategy.maker_fee_pct = value;
     } else if (name == "total_wallet_exposure") {
         cfg.total_wallet_exposure = value;
+    } else if (name == "time_based_unstuck_pct") {
+        cfg.strategy.time_based_unstuck_pct = value;
+    } else if (name == "time_based_unstuck_threshold") {
+        cfg.strategy.time_based_unstuck_threshold = value;
+    } else if (name == "time_based_unstuck_age") {
+        cfg.strategy.time_based_unstuck_age = static_cast<int>(value);
     }
 }
 
+// ---------------------------------------------------------------------------
+// get_metric_value — includes all Metrics fields
+// ---------------------------------------------------------------------------
+
 double get_metric_value(const Metrics& m, const std::string& name) {
+    if (name == "adg_smoothed") return m.adg_smoothed;
     if (name == "adg_usd") return m.adg_usd;
     if (name == "adg_per_exponential_fit_error_usd") return m.adg_per_exponential_fit_error_usd;
     if (name == "adg_per_exposure_long_usd") return m.adg_per_exposure_long_usd;
     if (name == "adg_per_exposure_short_usd") return m.adg_per_exposure_short_usd;
     if (name == "calmar_ratio_usd") return m.calmar_ratio_usd;
     if (name == "drawdown_worst") return m.drawdown_worst;
+    if (name == "drawdown_worst_mean_1pct") return m.drawdown_worst_mean_1pct;
     if (name == "entry_initial_balance_pct_long") return m.entry_initial_balance_pct_long;
     if (name == "entry_initial_balance_pct_short") return m.entry_initial_balance_pct_short;
     if (name == "equity_balance_diff_neg_max_usd") return m.equity_balance_diff_neg_max_usd;
@@ -154,88 +176,212 @@ double get_metric_value(const Metrics& m, const std::string& name) {
     if (name == "positions_held_per_day") return m.positions_held_per_day;
     if (name == "sharpe_ratio_usd") return m.sharpe_ratio_usd;
     if (name == "sortino_ratio_usd") return m.sortino_ratio_usd;
-    if (name == "sterling_ratio_usd") return m.sterling_ratio_usd;
+    if (name == "sterling_ratio") return m.sterling_ratio;
     if (name == "volume_pct_per_day_avg") return m.volume_pct_per_day_avg;
     return 0.0;
 }
 
-bool check_limits(const Metrics& m,
-                  const std::map<std::string, Limit>& limits) {
+// ---------------------------------------------------------------------------
+// Constraint penalty
+// ---------------------------------------------------------------------------
+
+double compute_total_penalty(const Metrics& m,
+                             const std::map<std::string, Limit>& limits) {
+    double penalty = 0.0;
     for (const auto& [name, lim] : limits) {
         double const val = get_metric_value(m, name);
-        if (lim.has_min && val < lim.min) return false;
-        if (lim.has_max && val > lim.max) return false;
+        if (lim.has_min && val < lim.min) {
+            double const diff = (lim.min - val) / std::max(std::abs(lim.min), 1e-10);
+            penalty += diff * diff;
+        }
+        if (lim.has_max && val > lim.max) {
+            double const diff = (val - lim.max) / std::max(std::abs(lim.max), 1e-10);
+            penalty += diff * diff;
+        }
     }
-    return true;
+    return penalty;
 }
 
-/// Online z-score tracker (Welford's algorithm) for scale-independent scoring.
-struct ZScoreTracker {
-    double mean = 0.0;
-    double m2 = 0.0;
-    size_t count = 0;
+// ---------------------------------------------------------------------------
+// build_lo_hi — from axes
+// ---------------------------------------------------------------------------
 
-    void observe(double val) {
-        ++count;
-        double const delta = val - mean;
-        mean += delta / static_cast<double>(count);
-        m2 += delta * (val - mean);
+void build_lo_hi(const std::vector<ParamAxis>& axes,
+                 std::vector<double>& lo, std::vector<double>& hi) {
+    lo.resize(axes.size());
+    hi.resize(axes.size());
+    for (size_t i = 0; i < axes.size(); ++i) {
+        lo[i] = axes[i].values.front();
+        hi[i] = axes[i].values.back();
     }
-
-    double normalize(double val) const {
-        if (count < 2) return 0.0;
-        double const variance = m2 / static_cast<double>(count - 1);
-        if (variance < 1e-15) return 0.0;
-        return (val - mean) / std::sqrt(variance);
-    }
-};
-
-double compute_normalized_score(
-    const Metrics& m,
-    const std::vector<ScoringMetric>& scoring,
-    const std::vector<ZScoreTracker>& trackers) {
-    double s = 0.0;
-    for (size_t i = 0; i < scoring.size(); ++i) {
-        s += trackers[i].normalize(get_metric_value(m, scoring[i].metric)) * scoring[i].weight;
-    }
-    return s;
 }
 
-void write_result_json(FILE* f, const std::vector<ParamAxis>& axes,
-                       const std::vector<size_t>& indices,
-                       const Metrics& m, double score, bool valid) {
-    std::fprintf(f, "{\"params\":{");
+// ---------------------------------------------------------------------------
+// make_config_from_genes
+// ---------------------------------------------------------------------------
+
+Config make_config_from_genes(const Config& base,
+                              const std::vector<ParamAxis>& axes,
+                              const std::vector<double>& genes) {
+    Config cfg = base;
+    for (size_t i = 0; i < genes.size(); ++i) {
+        apply_param_to_cfg(cfg, axes[i].name, genes[i]);
+    }
+    int const a = cfg.strategy.entry_ema_period;
+    int const b = cfg.strategy.parkinson_volatility_span;
+    cfg.warmup_candles = (a > b) ? a : b;
+    return cfg;
+}
+
+// ---------------------------------------------------------------------------
+// evaluate_individual
+// ---------------------------------------------------------------------------
+
+Individual evaluate_individual(
+    const Config& base_cfg,
+    const std::vector<LoadedCandles>& per_symbol_candles,
+    const std::vector<SymbolInfo>& symbols_info,
+    const std::vector<ParamAxis>& axes,
+    const std::map<std::string, Limit>& limits,
+    const std::vector<double>& genes,
+    int generation)
+{
+    Individual ind;
+    ind.genes = genes;
+    ind.generation = generation;
+    ind.config = make_config_from_genes(base_cfg, axes, genes);
+    auto const bt = run_backtest(ind.config, per_symbol_candles, symbols_info, "");
+    ind.metrics = compute_metrics(bt.equity_curve, ind.config);
+    ind.constraint_violation = compute_total_penalty(ind.metrics, limits);
+    return ind;
+}
+
+// ---------------------------------------------------------------------------
+// compute_objectives_for_population — raw engine-space values (no z-score)
+// ---------------------------------------------------------------------------
+
+void compute_objectives_for_population(
+    std::vector<Individual>& population,
+    const std::vector<ScoringMetric>& scoring)
+{
+    size_t const n_obj = scoring.size();
+    if (n_obj == 0 || population.empty()) return;
+
+    for (auto& ind : population) {
+        ind.objectives.resize(n_obj);
+        for (size_t j = 0; j < n_obj; ++j) {
+            double const raw = get_metric_value(ind.metrics, scoring[j].metric);
+            ind.objectives[j] = raw * scoring[j].engine_sign;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// write_result_json — one individual as JSON line
+// ---------------------------------------------------------------------------
+
+void write_result_json(FILE* f, const Individual& ind,
+                       const std::vector<ParamAxis>& axes)
+{
+    std::fprintf(f, "{\"generation\":%d,\"params\":{", ind.generation);
     bool first = true;
     for (size_t i = 0; i < axes.size(); ++i) {
         if (!first) std::fputc(',', f);
         first = false;
-        std::fprintf(f, "\"%s\":%.10f", axes[i].name.c_str(), axes[i].values[indices[i]]);
+        std::fprintf(f, "\"%s\":%.10f", axes[i].name.c_str(), ind.genes[i]);
     }
-    std::fprintf(f, "},\"score\":%.10f,\"valid\":%s"
-                    ",\"metrics\":{"
-                    "\"adg_usd\":%.10f"
-                    ",\"sharpe_ratio_usd\":%.10f"
-                    ",\"sortino_ratio_usd\":%.10f"
-                    ",\"calmar_ratio_usd\":%.10f"
-                    ",\"drawdown_worst\":%.10f"
-                    ",\"mdg_usd\":%.10f"
-                    ",\"gain_usd\":%.10f"
-                    ",\"loss_profit_ratio\":%.10f"
-                    "}}\n",
-                    score, valid ? "true" : "false",
-                    m.adg_usd,
-                    m.sharpe_ratio_usd,
-                    m.sortino_ratio_usd,
-                    m.calmar_ratio_usd,
-                    m.drawdown_worst,
-                    m.mdg_usd,
-                    m.gain_usd,
-                    m.loss_profit_ratio);
+    std::fprintf(f, "},\"objectives\":[");
+    for (size_t i = 0; i < ind.objectives.size(); ++i) {
+        if (i > 0) std::fputc(',', f);
+        std::fprintf(f, "%.10f", ind.objectives[i]);
+    }
+    std::fprintf(f, "],\"constraint_violation\":%.10f", ind.constraint_violation);
+    std::fprintf(f, ",\"metrics\":{");
+    std::fprintf(f, "\"adg_usd\":%.10f", ind.metrics.adg_usd);
+    std::fprintf(f, ",\"adg_smoothed\":%.10f", ind.metrics.adg_smoothed);
+    std::fprintf(f, ",\"sharpe_ratio_usd\":%.10f", ind.metrics.sharpe_ratio_usd);
+    std::fprintf(f, ",\"sortino_ratio_usd\":%.10f", ind.metrics.sortino_ratio_usd);
+    std::fprintf(f, ",\"calmar_ratio_usd\":%.10f", ind.metrics.calmar_ratio_usd);
+    std::fprintf(f, ",\"drawdown_worst\":%.10f", ind.metrics.drawdown_worst);
+    std::fprintf(f, ",\"drawdown_worst_mean_1pct\":%.10f", ind.metrics.drawdown_worst_mean_1pct);
+    std::fprintf(f, ",\"mdg_usd\":%.10f", ind.metrics.mdg_usd);
+    std::fprintf(f, ",\"gain_usd\":%.10f", ind.metrics.gain_usd);
+    std::fprintf(f, ",\"loss_profit_ratio\":%.10f", ind.metrics.loss_profit_ratio);
+    std::fprintf(f, ",\"sterling_ratio\":%.10f", ind.metrics.sterling_ratio);
+    std::fprintf(f, "}}\n");
 }
+
+// ---------------------------------------------------------------------------
+// write_pareto_json — rank==1 individuals
+// ---------------------------------------------------------------------------
+
+void write_pareto_json(const std::string& path,
+                       const std::vector<Individual>& population,
+                       const std::vector<ParamAxis>& axes)
+{
+    // Compute ranks
+    std::vector<std::vector<double>> all_obj(population.size());
+    for (size_t i = 0; i < population.size(); ++i) {
+        all_obj[i] = population[i].objectives;
+    }
+    auto ranks = fast_non_dominated_sort(all_obj);
+
+    FILE* f = std::fopen(path.c_str(), "w");
+    if (!f) {
+        std::fprintf(stderr, "Cannot write %s\n", path.c_str());
+        return;
+    }
+
+    std::fprintf(f, "[\n");
+    bool first_entry = true;
+    for (size_t i = 0; i < population.size(); ++i) {
+        if (ranks[i] != 1) continue;
+        if (!first_entry) std::fprintf(f, ",\n");
+        first_entry = false;
+
+        const auto& ind = population[i];
+        std::fprintf(f, "{\"params\":{");
+        bool first = true;
+        for (size_t j = 0; j < axes.size(); ++j) {
+            if (!first) std::fputc(',', f);
+            first = false;
+            std::fprintf(f, "\"%s\":%.10f", axes[j].name.c_str(), ind.genes[j]);
+        }
+        std::fprintf(f, "},\"objectives\":[");
+        for (size_t j = 0; j < ind.objectives.size(); ++j) {
+            if (j > 0) std::fputc(',', f);
+            std::fprintf(f, "%.10f", ind.objectives[j]);
+        }
+        std::fprintf(f, "],\"constraint_violation\":%.10f", ind.constraint_violation);
+        std::fprintf(f, ",\"metrics\":{");
+        std::fprintf(f, "\"adg_usd\":%.10f", ind.metrics.adg_usd);
+        std::fprintf(f, ",\"adg_smoothed\":%.10f", ind.metrics.adg_smoothed);
+        std::fprintf(f, ",\"sharpe_ratio_usd\":%.10f", ind.metrics.sharpe_ratio_usd);
+        std::fprintf(f, ",\"sortino_ratio_usd\":%.10f", ind.metrics.sortino_ratio_usd);
+        std::fprintf(f, ",\"calmar_ratio_usd\":%.10f", ind.metrics.calmar_ratio_usd);
+        std::fprintf(f, ",\"drawdown_worst\":%.10f", ind.metrics.drawdown_worst);
+        std::fprintf(f, ",\"drawdown_worst_mean_1pct\":%.10f", ind.metrics.drawdown_worst_mean_1pct);
+        std::fprintf(f, ",\"mdg_usd\":%.10f", ind.metrics.mdg_usd);
+        std::fprintf(f, ",\"sterling_ratio\":%.10f", ind.metrics.sterling_ratio);
+        std::fprintf(f, "}}");
+    }
+    std::fprintf(f, "\n]\n");
+    std::fclose(f);
+    // Count how many we wrote
+    size_t pareto_count = 0;
+    for (size_t i = 0; i < population.size(); ++i) {
+        if (ranks[i] == 1) ++pareto_count;
+    }
+    std::printf("  Wrote %s (%zu pareto-optimal solutions)\n",
+                path.c_str(), pareto_count);
+}
+
+// ---------------------------------------------------------------------------
+// compress_and_cleanup
+// ---------------------------------------------------------------------------
 
 void compress_and_cleanup(const std::string& tmp_path,
                           const std::string& zst_path) {
-    // Read entire tmp file
     FILE* f = std::fopen(tmp_path.c_str(), "rb");
     if (!f) return;
     std::fseek(f, 0, SEEK_END);
@@ -255,10 +401,8 @@ void compress_and_cleanup(const std::string& tmp_path,
     std::fclose(f);
     std::remove(tmp_path.c_str());
 
-    // Wrap lines into JSON array "[ ... ]"
     std::string json = "[\n" + content + "]\n";
 
-    // Compress with zstd
     size_t const bound = ZSTD_compressBound(json.size());
     std::vector<char> compressed(bound);
     size_t const csize = ZSTD_compress(compressed.data(), bound,
@@ -277,17 +421,19 @@ void compress_and_cleanup(const std::string& tmp_path,
     std::fwrite(compressed.data(), 1, csize, f);
     std::fclose(f);
 
-    std::printf("  Wrote %s (%zu results, zstd compressed)\n",
-                zst_path.c_str(), content.size() > 0
-                    ? static_cast<size_t>(std::count(content.begin(), content.end(), '\n'))
-                    : 0);
+    std::printf("  Wrote %s (zstd compressed)\n", zst_path.c_str());
 }
 
+// ---------------------------------------------------------------------------
+// write_live_state — GA generation-based, format compatible with TUI
+// ---------------------------------------------------------------------------
+
 void write_live_state(const std::string& path,
-                       size_t completed, size_t total,
-                       const std::vector<RunResult>& top_results,
-                       const std::vector<ScoringMetric>& scoring,
-                       const std::map<std::string, Limit>& limits)
+                      size_t completed, size_t total,
+                      const std::vector<Individual>& sorted_population,
+                      const std::vector<ScoringMetric>& scoring,
+                      const std::map<std::string, Limit>& limits,
+                      const std::vector<ParamAxis>& axes)
 {
     std::string tmp_path = path + ".tmp";
     FILE* f = std::fopen(tmp_path.c_str(), "w");
@@ -320,35 +466,35 @@ void write_live_state(const std::string& path,
     }
     std::fprintf(f, "},");
 
-    // top results
+    // top results (top 25 by rank then crowding distance)
     std::fprintf(f, "\"top\":[");
-    size_t const n = std::min(size_t{25}, top_results.size());
+    size_t const n = std::min(size_t{25}, sorted_population.size());
     for (size_t i = 0; i < n; ++i) {
         if (i > 0) std::fputc(',', f);
-        const auto& r = top_results[i];
-        std::fprintf(f, "{\"score\":%.10f,\"valid\":%s,\"params\":{",
-                     r.score, r.valid ? "true" : "false");
+        const auto& ind = sorted_population[i];
+
+        std::fprintf(f, "{\"constraint_violation\":%.10f,\"params\":{",
+                     ind.constraint_violation);
         bool fp = true;
-        for (const auto& [k, v] : r.params) {
+        for (size_t j = 0; j < ind.genes.size(); ++j) {
             if (!fp) std::fputc(',', f);
             fp = false;
-            std::fprintf(f, "\"%s\":%.10f", k.c_str(), v);
+            std::fprintf(f, "\"%s\":%.10f", axes[j].name.c_str(), ind.genes[j]);
         }
-        // Write all scoring + limit metrics dynamically
+        std::fprintf(f, "},\"metrics\":{");
         std::vector<std::string> all_metric_names;
         for (const auto& sm : scoring) all_metric_names.push_back(sm.metric);
-        for (const auto& [name, _] : limits) all_metric_names.push_back(name);
+        for (const auto& [nm, _] : limits) all_metric_names.push_back(nm);
         std::sort(all_metric_names.begin(), all_metric_names.end());
         all_metric_names.erase(
             std::unique(all_metric_names.begin(), all_metric_names.end()),
             all_metric_names.end());
 
-        std::fprintf(f, "},\"metrics\":{");
         for (size_t mi = 0; mi < all_metric_names.size(); ++mi) {
             if (mi > 0) std::fputc(',', f);
             std::fprintf(f, "\"%s\":%.10f",
                          all_metric_names[mi].c_str(),
-                         get_metric_value(r.metrics, all_metric_names[mi]));
+                         get_metric_value(ind.metrics, all_metric_names[mi]));
         }
         std::fprintf(f, "}}");
     }
@@ -358,46 +504,114 @@ void write_live_state(const std::string& path,
     std::rename(tmp_path.c_str(), path.c_str());
 }
 
+// ---------------------------------------------------------------------------
+// Build RunResult from Individual (helper for callback)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Duplicate detection — hash genes vector and perturb on collision
+// ---------------------------------------------------------------------------
+
+size_t hash_genes(const std::vector<double>& genes) {
+    size_t h = 0;
+    for (double g : genes) {
+        long long const rounded = static_cast<long long>(g * 1e9 + (g < 0 ? -0.5 : 0.5));
+        h ^= static_cast<size_t>(rounded) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    }
+    return h;
+}
+
+void deduplicate_genes(std::vector<double>& genes,
+                       std::unordered_set<size_t>& seen_hashes,
+                       const std::vector<double>& lo,
+                       const std::vector<double>& hi,
+                       std::mt19937_64& rng) {
+    size_t h = hash_genes(genes);
+    if (seen_hashes.find(h) == seen_hashes.end()) {
+        seen_hashes.insert(h);
+        return;
+    }
+
+    std::normal_distribution<double> gauss{0.0, 0.01};
+    std::uniform_real_distribution<double> unit{0.0, 1.0};
+
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        for (size_t i = 0; i < genes.size(); ++i) {
+            genes[i] += gauss(rng) * (hi[i] - lo[i]);
+            if (genes[i] < lo[i]) genes[i] = lo[i];
+            if (genes[i] > hi[i]) genes[i] = hi[i];
+        }
+        h = hash_genes(genes);
+        if (seen_hashes.find(h) == seen_hashes.end()) {
+            seen_hashes.insert(h);
+            return;
+        }
+    }
+    // Fallback: uniform random
+    for (size_t i = 0; i < genes.size(); ++i) {
+        genes[i] = lo[i] + unit(rng) * (hi[i] - lo[i]);
+    }
+    seen_hashes.insert(hash_genes(genes));
+}
+
+RunResult individual_to_result(const Individual& ind,
+                               const std::vector<ParamAxis>& axes) {
+    RunResult rr;
+    for (size_t i = 0; i < axes.size(); ++i) {
+        rr.params[axes[i].name] = ind.genes[i];
+    }
+    rr.metrics = ind.metrics;
+    rr.objectives = ind.objectives;
+    rr.constraint_violation = ind.constraint_violation;
+    rr.generation = ind.generation;
+    return rr;
+}
+
 } // anonymous namespace
 
-std::vector<RunResult> run_optimization(
+// ---------------------------------------------------------------------------
+// run_optimization — NSGA-II main loop
+// ---------------------------------------------------------------------------
+
+OptimizerResult run_optimization(
     const Config& cfg,
     const std::vector<LoadedCandles>& per_symbol_candles,
     const std::vector<SymbolInfo>& symbols_info,
     const std::string& results_path,
     OptimizerCallback callback,
-    size_t top_n,
     const std::string& live_state_path)
 {
+    // 1. Parse bounds → axes → lo/hi
     auto const axes = build_axes(cfg.optimize.bounds);
+    std::vector<double> lo, hi;
+    build_lo_hi(axes, lo, hi);
 
-    // Compute total combos without creating them all
-    size_t total = 1;
-    for (const auto& ax : axes) total *= ax.values.size();
-
-    std::printf("  Parameter combinations: %zu\n", total);
-    if (total == 0) return {};
-
-    // Cap to max_iterations if set
-    size_t constexpr MAX_COMBOS = 100000;
-    size_t const original_total = total;
-    size_t const max_iter = cfg.optimize.max_iterations;
-    if (max_iter > 0 && total > max_iter) {
-        std::printf("  Capped to %zu iterations (max_iterations)\n", max_iter);
-        total = max_iter;
+    size_t const n_params = axes.size();
+    if (n_params == 0) {
+        std::fprintf(stderr, "No parameters to optimize.\n");
+        return {};
     }
 
-    // Check random sampling against original total before max_iter cap
-    bool const random_sample = original_total > MAX_COMBOS;
+    auto const& limits = cfg.optimize.limits;
+    auto const& scoring = cfg.optimize.scoring;
+    auto const& ga = cfg.optimize.ga;
 
-    // Min-heap: smallest score at front (pop weakest when full)
-    auto cmp = [](const RunResult& a, const RunResult& b) {
-        return a.score > b.score;
-    };
-    std::vector<RunResult> top_results;
-    top_results.reserve(top_n + 1);
+    int const pop_size = ga.population_size;
+    int const n_gen = ga.n_generations;
 
-    // Temp file for incremental JSON output
+    std::printf("  NSGA-II: pop=%d, gen=%d, params=%zu, objectives=%zu\n",
+                pop_size, n_gen, n_params, scoring.size());
+
+    // 2. Random initial population
+    std::mt19937_64 rng(std::random_device{}());
+    auto gene_pop = random_population(static_cast<size_t>(pop_size), lo, hi, rng);
+    // Deduplicate initial population
+    std::unordered_set<size_t> seen_hashes;
+    for (auto& g : gene_pop) {
+        deduplicate_genes(g, seen_hashes, lo, hi, rng);
+    }
+
+    // 3. Temp file for incremental results
     std::string tmp_path;
     FILE* tmp_file = nullptr;
     if (!results_path.empty()) {
@@ -405,148 +619,192 @@ std::vector<RunResult> run_optimization(
         tmp_file = std::fopen(tmp_path.c_str(), "w");
     }
 
-    auto const& limits = cfg.optimize.limits;
-    auto const& scoring = cfg.optimize.scoring;
-
-    // Per-metric trackers for z-score normalized scoring
-    std::vector<ZScoreTracker> trackers(scoring.size());
-
-    // Setup combo iteration
-    size_t const n_axes = axes.size();
-    std::vector<size_t> sizes(n_axes);
-    for (size_t i = 0; i < n_axes; ++i) sizes[i] = axes[i].values.size();
-
-    if (random_sample) {
-        std::printf("  Grid too large (%zu), random sampling %zu combos\n", original_total, total);
-    }
-
+    // 4. Thread pool for parallel evaluation
     ThreadPool pool(cfg.optimize.n_workers > 0 ? cfg.optimize.n_workers : 1);
-    std::mutex combo_mutex;
-    size_t live_counter = 0;
 
-    // The combo processing function (called for each set of indices)
-    auto process_combo = [&](const std::vector<size_t>& indices, size_t seq_idx) {
-        Config local_cfg = cfg;
-        for (size_t i = 0; i < n_axes; ++i) {
-            apply_params(local_cfg, axes[i], axes[i].values[indices[i]]);
-        }
-        int const a = local_cfg.strategy.entry_ema_period;
-        int const b = local_cfg.strategy.parkinson_volatility_span;
-        local_cfg.warmup_candles = (a > b) ? a : b;
-
-        auto const bt = run_backtest(local_cfg, per_symbol_candles, symbols_info, "");
-        auto const metrics = compute_metrics(bt.equity_curve, local_cfg);
-
-        std::lock_guard<std::mutex> lock(combo_mutex);
-
-        for (size_t i = 0; i < scoring.size(); ++i) {
-            trackers[i].observe(get_metric_value(metrics, scoring[i].metric));
-        }
-        double const score = compute_normalized_score(metrics, scoring, trackers);
-        bool const valid = check_limits(metrics, limits);
-
-        RunResult rr;
-        for (size_t i = 0; i < n_axes; ++i) {
-            rr.params[axes[i].name] = axes[i].values[indices[i]];
-        }
-        rr.metrics = metrics;
-        rr.score = score;
-        rr.valid = valid;
-
-        if (top_results.size() < top_n) {
-            top_results.push_back(rr);
-            std::push_heap(top_results.begin(), top_results.end(), cmp);
-        } else if (rr.score > top_results.front().score) {
-            std::pop_heap(top_results.begin(), top_results.end(), cmp);
-            top_results.back() = rr;
-            std::push_heap(top_results.begin(), top_results.end(), cmp);
-        }
-
-        if (tmp_file) {
-            write_result_json(tmp_file, axes, indices, metrics, score, valid);
-        }
-
-        if (callback) {
-            callback(rr, seq_idx + 1, total);
-        }
-
-        ++live_counter;
-        if (!live_state_path.empty() && (live_counter % 50 == 0 || live_counter == 1)) {
-            auto sorted_copy = top_results;
-            std::sort(sorted_copy.begin(), sorted_copy.end(),
-                [](const RunResult& a, const RunResult& b) { return a.score > b.score; });
-            write_live_state(live_state_path, live_counter, total,
-                             sorted_copy, scoring, limits);
-        }
-    };
-
-    if (random_sample) {
-        // Pre-generate all random linear indices
-        std::mt19937_64 rng(std::random_device{}());
-        std::vector<size_t> linear_idx(total);
-        for (size_t s = 0; s < total; ++s) {
-            linear_idx[s] = std::uniform_int_distribution<size_t>{0, original_total - 1}(rng);
-        }
-        for (size_t s = 0; s < total; ++s) {
-            pool.submit([s, li = linear_idx[s], &process_combo, &n_axes, &sizes]() {
-                std::vector<size_t> indices(n_axes);
-                size_t linear = li;
-                for (int p = static_cast<int>(n_axes) - 1; p >= 0; --p) {
-                    indices[static_cast<size_t>(p)] = linear % sizes[static_cast<size_t>(p)];
-                    linear /= sizes[static_cast<size_t>(p)];
-                }
-                process_combo(indices, s);
-            });
-        }
-    } else {
-        // Grid iteration with atomic counter
-        std::atomic<size_t> next_combo(0);
-        int const n_workers = pool.worker_count();
-        for (int w = 0; w < n_workers; ++w) {
-            pool.submit([&, w]() {
-                std::vector<size_t> indices(n_axes);
+    // 5. Evaluate initial population in parallel
+    std::vector<Individual> population(static_cast<size_t>(pop_size));
+    {
+        std::atomic<size_t> eval_idx{0};
+        int const nw = pool.worker_count();
+        for (int w = 0; w < nw; ++w) {
+            pool.submit([&]() {
                 while (true) {
-                    size_t const idx = next_combo.fetch_add(1, std::memory_order_relaxed);
-                    if (idx >= total) break;
-                    size_t linear = idx;
-                    for (int p = static_cast<int>(n_axes) - 1; p >= 0; --p) {
-                        indices[static_cast<size_t>(p)] = linear % sizes[static_cast<size_t>(p)];
-                        linear /= sizes[static_cast<size_t>(p)];
-                    }
-                    process_combo(indices, idx);
+                    size_t const idx = eval_idx.fetch_add(1, std::memory_order_relaxed);
+                    if (idx >= population.size()) break;
+                    population[idx] = evaluate_individual(
+                        cfg, per_symbol_candles, symbols_info, axes, limits,
+                        gene_pop[idx], 0);
                 }
             });
         }
-    }
-    pool.wait();
-
-    // Final live state write (ensure done=true is captured)
-    if (!live_state_path.empty()) {
-        // Sort a copy for the final state
-        auto sorted_copy = top_results;
-        std::sort(sorted_copy.begin(), sorted_copy.end(),
-            [](const RunResult& a, const RunResult& b) { return a.score > b.score; });
-        write_live_state(live_state_path, total, total,
-                         sorted_copy, scoring, limits);
+        pool.wait();
     }
 
+    // 6. Compute objectives + environmental selection for initial pop
+    compute_objectives_for_population(population, scoring);
+    population = select_next_generation(population, static_cast<size_t>(pop_size));
+    compute_objectives_for_population(population, scoring);
+
+    // Write initial population to temp file
+    if (tmp_file) {
+        for (const auto& ind : population) {
+            write_result_json(tmp_file, ind, axes);
+        }
+    }
+
+    // 7. Generations loop
+    for (int gen = 1; gen <= n_gen; ++gen) {
+        size_t const off_size = static_cast<size_t>(pop_size);
+        std::vector<Individual> offspring(off_size);
+
+        // Create offspring (sequential, uses main RNG)
+        for (size_t i = 0; i + 1 < off_size; i += 2) {
+            size_t p1_idx = tournament_select(population, 2, rng);
+            size_t p2_idx = tournament_select(population, 2, rng);
+
+            std::vector<double> c1 = population[p1_idx].genes;
+            std::vector<double> c2 = population[p2_idx].genes;
+
+            sbx_crossover(c1, c2, lo, hi, ga.crossover_prob, ga.crossover_eta, rng);
+            polynomial_mutation(c1, lo, hi, ga.mutation_prob, ga.mutation_indpb, ga.mutation_eta, rng);
+            polynomial_mutation(c2, lo, hi, ga.mutation_prob, ga.mutation_indpb, ga.mutation_eta, rng);
+
+            deduplicate_genes(c1, seen_hashes, lo, hi, rng);
+            deduplicate_genes(c2, seen_hashes, lo, hi, rng);
+            offspring[i].genes = std::move(c1);
+            offspring[i].generation = gen;
+            offspring[i + 1].genes = std::move(c2);
+            offspring[i + 1].generation = gen;
+        }
+
+        // Evaluate offspring in parallel
+        {
+            std::atomic<size_t> eval_idx{0};
+            int const nw = pool.worker_count();
+            for (int w = 0; w < nw; ++w) {
+                pool.submit([&]() {
+                    while (true) {
+                        size_t const idx = eval_idx.fetch_add(1, std::memory_order_relaxed);
+                        if (idx >= off_size) break;
+                        offspring[idx] = evaluate_individual(
+                            cfg, per_symbol_candles, symbols_info, axes, limits,
+                            offspring[idx].genes, gen);
+                    }
+                });
+            }
+            pool.wait();
+        }
+
+        // Combined = parents + offspring
+        std::vector<Individual> combined;
+        combined.reserve(population.size() + offspring.size());
+        combined.insert(combined.end(), population.begin(), population.end());
+        combined.insert(combined.end(), offspring.begin(), offspring.end());
+
+        // Compute objectives + environmental selection
+        compute_objectives_for_population(combined, scoring);
+        population = select_next_generation(combined, static_cast<size_t>(pop_size));
+        compute_objectives_for_population(population, scoring);
+
+        // Write offspring results to temp file
+        if (tmp_file) {
+            for (const auto& ind : offspring) {
+                write_result_json(tmp_file, ind, axes);
+            }
+        }
+
+        // Find best of generation (by rank then crowding distance)
+        auto best_it = std::max_element(population.begin(), population.end(),
+            [](const Individual& a, const Individual& b) {
+                if (a.rank != b.rank) return a.rank > b.rank;
+                return a.crowding_distance < b.crowding_distance;
+            });
+
+        // Callback with best of generation
+        if (callback && best_it != population.end()) {
+            RunResult const rr = individual_to_result(*best_it, axes);
+            callback(rr, static_cast<size_t>(gen), static_cast<size_t>(n_gen));
+        }
+
+        // Live state
+        if (!live_state_path.empty()) {
+            auto sorted = population;
+            std::sort(sorted.begin(), sorted.end(),
+                [](const Individual& a, const Individual& b) {
+                    if (a.rank != b.rank) return a.rank < b.rank;
+                    return a.crowding_distance > b.crowding_distance;
+                });
+            write_live_state(live_state_path, static_cast<size_t>(gen),
+                             static_cast<size_t>(n_gen),
+                             sorted, scoring, limits, axes);
+        }
+    }
+
+    // 8. Close temp file
     if (tmp_file) {
         std::fclose(tmp_file);
     }
 
-    // Compress temp file to zst
+    // 9. Compress results
     if (!results_path.empty()) {
         compress_and_cleanup(tmp_path, results_path + ".zst");
     }
 
-    // Sort top results descending by score
-    std::sort(top_results.begin(), top_results.end(),
+    // 10. Build OptimizerResult
+    OptimizerResult result;
+
+    std::vector<std::vector<double>> final_obj(population.size());
+    for (size_t i = 0; i < population.size(); ++i) {
+        final_obj[i] = population[i].objectives;
+    }
+    auto final_ranks = fast_non_dominated_sort(final_obj);
+
+    for (size_t i = 0; i < population.size(); ++i) {
+        RunResult const rr = individual_to_result(population[i], axes);
+        result.all_results.push_back(rr);
+        if (final_ranks[i] == 1) {
+            result.pareto_front.push_back(rr);
+        }
+    }
+
+    // Sort all_results by constraint_violation ascending (lowest penalty first)
+    // then by average objective (lower is better in engine-space)
+    std::sort(result.all_results.begin(), result.all_results.end(),
         [](const RunResult& a, const RunResult& b) {
-            return a.score > b.score;
+            if (a.constraint_violation != b.constraint_violation)
+                return a.constraint_violation < b.constraint_violation;
+            double a_sum = 0.0, b_sum = 0.0;
+            for (size_t i = 0; i < std::min(a.objectives.size(), b.objectives.size()); ++i) {
+                a_sum += a.objectives[i];
+                b_sum += b.objectives[i];
+            }
+            return a_sum < b_sum;
         });
 
-    std::printf("  Top %zu results\n", top_results.size());
-    return top_results;
+    // Sort pareto front by constraint_violation then average objective too
+    std::sort(result.pareto_front.begin(), result.pareto_front.end(),
+        [](const RunResult& a, const RunResult& b) {
+            if (a.constraint_violation != b.constraint_violation)
+                return a.constraint_violation < b.constraint_violation;
+            double a_sum = 0.0, b_sum = 0.0;
+            for (size_t i = 0; i < std::min(a.objectives.size(), b.objectives.size()); ++i) {
+                a_sum += a.objectives[i];
+                b_sum += b.objectives[i];
+            }
+            return a_sum < b_sum;
+        });
+
+    // 11. Write Pareto JSON
+    if (!results_path.empty()) {
+        write_pareto_json(results_path + "_pareto.json", population, axes);
+    }
+
+    std::printf("  Pareto front: %zu solutions, total evaluated: %zu\n",
+                result.pareto_front.size(),
+                result.all_results.size());
+
+    return result;
 }
 
 } // namespace martingale

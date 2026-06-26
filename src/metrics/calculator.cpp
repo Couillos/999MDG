@@ -106,6 +106,45 @@ double simple_return(const std::vector<double>& eq) {
     return (eq.back() - eq.front()) / eq.front();
 }
 
+/// Computes worst (most negative) drawdown per day from full-resolution equity curve.
+std::vector<double> daily_worst_drawdowns(const std::vector<EquityPoint>& curve) {
+    if (curve.empty()) return {};
+    std::vector<double> result;
+    double peak = curve[0].equity;
+    int64_t prev_day = curve[0].timestamp - (curve[0].timestamp % 86400000);
+    double worst_dd = 0.0;
+    for (size_t i = 0; i < curve.size(); ++i) {
+        int64_t const day = curve[i].timestamp - (curve[i].timestamp % 86400000);
+        if (i > 0 && day != prev_day) {
+            result.push_back(worst_dd);
+            prev_day = day;
+            worst_dd = 0.0;
+        }
+        if (curve[i].equity > peak) peak = curve[i].equity;
+        double const dd = (curve[i].equity - peak) / peak;
+        if (dd < worst_dd) worst_dd = dd;
+    }
+    result.push_back(worst_dd);
+    return result;
+}
+
+/// Computes geometric ADG with smoothed terminal (mean of last 3 daily equities).
+double smoothed_terminal_adg(const std::vector<double>& daily_eqs) {
+    if (daily_eqs.size() < 2) return 0.0;
+    double const start = daily_eqs[0];
+    if (start <= 0.0) return 0.0;
+    size_t const tail_len = std::min(size_t{3}, daily_eqs.size());
+    double sum = 0.0;
+    for (size_t i = daily_eqs.size() - tail_len; i < daily_eqs.size(); ++i) {
+        sum += daily_eqs[i];
+    }
+    double const end = sum / static_cast<double>(tail_len);
+    if (end <= 0.0) return 0.0;
+    double const n_days = static_cast<double>(daily_eqs.size());
+    double const gain = end / start;
+    return std::pow(gain, 1.0 / n_days) - 1.0;
+}
+
 } // anonymous namespace
 
 Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
@@ -141,9 +180,17 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
     m.drawdown_worst = max_drawdown(d_eq);
     if (m.drawdown_worst > 0.0) m.calmar_ratio_usd = cagr_clamped / m.drawdown_worst;
 
-    double const avg_dd = avg_drawdown(d_eq);
-    double const st_denom = avg_dd + 0.10;
-    if (st_denom > 0.0) m.sterling_ratio_usd = cagr_clamped / st_denom;
+    // Drawdown worst mean 1%
+    {
+        auto daily_dd = daily_worst_drawdowns(equity_curve);
+        if (daily_dd.size() >= 100) {
+            std::sort(daily_dd.begin(), daily_dd.end());
+            size_t const nw = std::max(size_t{1}, daily_dd.size() / 100);
+            double sum = 0.0;
+            for (size_t i = 0; i < nw; ++i) sum += daily_dd[i];
+            m.drawdown_worst_mean_1pct = std::abs(sum) / static_cast<double>(nw);
+        }
+    }
 
     // Omega
     double sum_pos = 0.0, sum_neg = 0.0;
@@ -343,6 +390,8 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
         if (es > 0.0) { m.adg_per_exposure_short_usd = mean_ret / es; m.mdg_per_exposure_short_usd = med_ret / es; m.gain_per_exposure_short_usd = m.gain_usd / es; }
     }
 
+    m.adg_smoothed = smoothed_terminal_adg(d_eq);
+
     // Entry initial balance %
     {
         double const initial = cfg.initial_balance_usd;
@@ -351,6 +400,10 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
             if (tg > 0.0) m.entry_initial_balance_pct_long = tg / initial;
             else m.entry_initial_balance_pct_short = (-tg) / initial;
         }
+    }
+
+    if (m.drawdown_worst_mean_1pct > 0.0) {
+        m.sterling_ratio = m.adg_smoothed / m.drawdown_worst_mean_1pct;
     }
 
     return m;

@@ -143,3 +143,68 @@ TEST(MetricsTest, LossProfitRatio) {
     EXPECT_GT(m.loss_profit_ratio, 0.0);
     EXPECT_GT(m.gain_usd, 0.0);
 }
+
+TEST(MetricsTest, AdgSmoothed) {
+    auto cfg = make_cfg();
+    std::vector<EquityPoint> curve;
+    int64_t ts = 1704067200000;
+    // 10 daily points: linear from 10000 to 10090 (0.1% per day)
+    for (int i = 0; i < 10; ++i) {
+        double const eq = 10000.0 + static_cast<double>(i) * 10.0;
+        curve.push_back({ts, eq, eq, 0.0, {}});
+        ts += 86400000;
+    }
+    auto m = compute_metrics(curve, cfg);
+
+    // d_eq = [10000, 10010, ..., 10090]
+    // tail_len = 3, end = mean([10070, 10080, 10090]) = 10080
+    // start = 10000, gain = 1.008
+    // adg_smoothed = 1.008^(1/10) - 1
+    double const expected = std::pow(10080.0 / 10000.0, 1.0 / 10.0) - 1.0;
+    EXPECT_NEAR(m.adg_smoothed, expected, 1e-15);
+
+    // No drawdown means drawdown_worst_mean_1pct stays 0
+    EXPECT_DOUBLE_EQ(m.drawdown_worst_mean_1pct, 0.0);
+}
+
+TEST(MetricsTest, DrawdownWorstMean1Pct) {
+    auto cfg = make_cfg();
+    std::vector<EquityPoint> curve;
+    int64_t ts = 1704067200000;
+    // 200 daily points: first 150 at 10000, last 50 at 8000 (20% drawdown)
+    for (int i = 0; i < 200; ++i) {
+        double const eq = (i < 150) ? 10000.0 : 8000.0;
+        curve.push_back({ts, eq, eq, 0.0, {}});
+        ts += 86400000;
+    }
+    auto m = compute_metrics(curve, cfg);
+
+    // daily_dd = [0.0 (x150), -0.20 (x50)]
+    // sorted: [-0.20 (x50), 0.0 (x150)]
+    // nw = max(1, 200/100) = 2
+    // worst 2 mean = (-0.20 + -0.20) / 2 = -0.20
+    // drawdown_worst_mean_1pct = |-0.20| = 0.20
+    EXPECT_NEAR(m.drawdown_worst_mean_1pct, 0.20, 1e-15);
+}
+
+TEST(MetricsTest, SterlingRatio) {
+    auto cfg = make_cfg();
+    std::vector<EquityPoint> curve;
+    int64_t ts = 1704067200000;
+    // 200 daily points: first 150 at 10000, last 50 at 8000
+    for (int i = 0; i < 200; ++i) {
+        double const eq = (i < 150) ? 10000.0 : 8000.0;
+        curve.push_back({ts, eq, eq, 0.0, {}});
+        ts += 86400000;
+    }
+    auto m = compute_metrics(curve, cfg);
+
+    // d_eq = [10000 (x150), 8000 (x50)]
+    // tail_len = 3, end = 8000, start = 10000
+    // adg_smoothed = (8000/10000)^(1/200) - 1
+    // drawdown_worst_mean_1pct = 0.20
+    // sterling_ratio = adg_smoothed / 0.20
+    double const expected_adg = std::pow(8000.0 / 10000.0, 1.0 / 200.0) - 1.0;
+    double const expected_sr = expected_adg / 0.20;
+    EXPECT_NEAR(m.sterling_ratio, expected_sr, 1e-15);
+}

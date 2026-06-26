@@ -85,9 +85,17 @@ void OptimizerTUI::draw_ui() {
         sorted = results_;
     }
 
+    // Sort by constraint_violation (ascending) then avg objective (ascending, engine-space)
     std::sort(sorted.begin(), sorted.end(),
         [](const RunResult& a, const RunResult& b) {
-            return a.score > b.score;
+            if (a.constraint_violation != b.constraint_violation)
+                return a.constraint_violation < b.constraint_violation;
+            double a_sum = 0.0, b_sum = 0.0;
+            for (size_t i = 0; i < std::min(a.objectives.size(), b.objectives.size()); ++i) {
+                a_sum += a.objectives[i];
+                b_sum += b.objectives[i];
+            }
+            return a_sum < b_sum;
         });
 
     size_t const n = std::min(size_t{25}, sorted.size());
@@ -97,7 +105,7 @@ void OptimizerTUI::draw_ui() {
 
     // Title
     attron(A_BOLD | COLOR_PAIR(1));
-    mvprintw(0, 0, "Martingale Optimizer  |  Combo: %zu/%zu  |  Top 25 Live",
+    mvprintw(0, 0, "Martingale Optimizer  |  Gen: %zu/%zu  |  Top 25 Live",
              completed, total_combos_);
     attroff(A_BOLD | COLOR_PAIR(1));
 
@@ -108,12 +116,9 @@ void OptimizerTUI::draw_ui() {
     }
 
     // Build column headers
-    // Rank | Params | Score | V | scoring_metrics... | limit_metrics...
-    int col = 0;
     int const rank_w = 5;
     int const param_w = 28;
-    int const score_w = 12;
-    int const valid_w = 4;
+    int const cv_w = 12;
     int const metric_w = 12;
 
     int x = 0;
@@ -121,10 +126,8 @@ void OptimizerTUI::draw_ui() {
     x += rank_w;
     mvprintw(2, x, "%-*s", param_w, "Params");
     x += param_w;
-    mvprintw(2, x, "%-*s", score_w, "Score");
-    x += score_w;
-    mvprintw(2, x, "%-*s", valid_w, "Ok");
-    x += valid_w;
+    mvprintw(2, x, "%-*s", cv_w, "C Violation");
+    x += cv_w;
 
     for (const auto& sm : scoring_) {
         std::string label = sm.metric.substr(0, 11);
@@ -165,13 +168,8 @@ void OptimizerTUI::draw_ui() {
         mvprintw(row, x, "%-*s", param_w, params_str.c_str());
         x += param_w;
 
-        mvprintw(row, x, "%-*.4f", score_w, r.score);
-        x += score_w;
-
-        attron(r.valid ? COLOR_PAIR(2) : COLOR_PAIR(3));
-        mvprintw(row, x, "%-*s", valid_w, r.valid ? "Y" : "N");
-        attroff(r.valid ? COLOR_PAIR(2) : COLOR_PAIR(3));
-        x += valid_w;
+        mvprintw(row, x, "%-*.6f", cv_w, r.constraint_violation);
+        x += cv_w;
 
         for (const auto& sm : scoring_) {
             std::string val = metric_value(r.metrics, sm.metric);
@@ -192,11 +190,6 @@ void OptimizerTUI::draw_ui() {
         mvprintw(static_cast<int>(n) + 5, 0, " Press 'q' to abort optimization.");
     }
 
-    // Color pairs
-    if (has_colors()) {
-        // Already initialized
-    }
-
     refresh();
 }
 
@@ -214,9 +207,11 @@ std::string format_metric(const Metrics& m, const std::string& name) {
         }
         return std::string(buf);
     };
+    if (name == "adg_smoothed") return get(m.adg_smoothed);
     if (name == "adg_usd") return get(m.adg_usd);
     if (name == "calmar_ratio_usd") return get(m.calmar_ratio_usd);
     if (name == "drawdown_worst") return get(m.drawdown_worst);
+    if (name == "drawdown_worst_mean_1pct") return get(m.drawdown_worst_mean_1pct);
     if (name == "equity_balance_diff_neg_max_usd") return get(m.equity_balance_diff_neg_max_usd);
     if (name == "equity_balance_diff_neg_mean_usd") return get(m.equity_balance_diff_neg_mean_usd);
     if (name == "expected_shortfall_1pct_usd") return get(m.expected_shortfall_1pct_usd);
@@ -236,17 +231,19 @@ std::string format_metric(const Metrics& m, const std::string& name) {
     if (name == "positions_held_per_day") return get(m.positions_held_per_day);
     if (name == "sharpe_ratio_usd") return get(m.sharpe_ratio_usd);
     if (name == "sortino_ratio_usd") return get(m.sortino_ratio_usd);
-    if (name == "sterling_ratio_usd") return get(m.sterling_ratio_usd);
+    if (name == "sterling_ratio") return get(m.sterling_ratio);
     if (name == "volume_pct_per_day_avg") return get(m.volume_pct_per_day_avg);
     return get(0.0);
 }
 void set_metric_value(Metrics& m, const std::string& name, double val) {
+    if (name == "adg_smoothed") { m.adg_smoothed = val; return; }
     if (name == "adg_usd") { m.adg_usd = val; return; }
     if (name == "adg_per_exponential_fit_error_usd") { m.adg_per_exponential_fit_error_usd = val; return; }
     if (name == "adg_per_exposure_long_usd") { m.adg_per_exposure_long_usd = val; return; }
     if (name == "adg_per_exposure_short_usd") { m.adg_per_exposure_short_usd = val; return; }
     if (name == "calmar_ratio_usd") { m.calmar_ratio_usd = val; return; }
     if (name == "drawdown_worst") { m.drawdown_worst = val; return; }
+    if (name == "drawdown_worst_mean_1pct") { m.drawdown_worst_mean_1pct = val; return; }
     if (name == "entry_initial_balance_pct_long") { m.entry_initial_balance_pct_long = val; return; }
     if (name == "entry_initial_balance_pct_short") { m.entry_initial_balance_pct_short = val; return; }
     if (name == "equity_balance_diff_neg_max_usd") { m.equity_balance_diff_neg_max_usd = val; return; }
@@ -276,7 +273,7 @@ void set_metric_value(Metrics& m, const std::string& name, double val) {
     if (name == "positions_held_per_day") { m.positions_held_per_day = val; return; }
     if (name == "sharpe_ratio_usd") { m.sharpe_ratio_usd = val; return; }
     if (name == "sortino_ratio_usd") { m.sortino_ratio_usd = val; return; }
-    if (name == "sterling_ratio_usd") { m.sterling_ratio_usd = val; return; }
+    if (name == "sterling_ratio") { m.sterling_ratio = val; return; }
     if (name == "volume_pct_per_day_avg") { m.volume_pct_per_day_avg = val; return; }
 }
 
@@ -358,7 +355,10 @@ void run_watch_tui(const std::string& state_path) {
                 std::string_view sv;
                 if (!so["metric"].get_string().get(sv)) sm.metric = std::string(sv);
                 double w;
-                if (!so["weight"].get_double().get(w)) sm.weight = w;
+                sm.weight = so["weight"].get_double().get(w) ? 1.0 : w;
+                std::string_view gsv;
+                if (!so["goal"].get_string().get(gsv)) sm.goal = std::string(gsv);
+                sm.engine_sign = (sm.goal == "max") ? -1.0 : 1.0;
                 scoring.push_back(sm);
             }
         }
@@ -388,10 +388,8 @@ void run_watch_tui(const std::string& state_path) {
                 simdjson::ondemand::object ro;
                 if (elem.get_object().get(ro)) continue;
                 RunResult rr{};
-                double sc;
-                if (!ro["score"].get_double().get(sc)) rr.score = sc;
-                bool vld;
-                if (!ro["valid"].get_bool().get(vld)) rr.valid = vld;
+                double cv;
+                if (!ro["constraint_violation"].get_double().get(cv)) rr.constraint_violation = cv;
 
                 simdjson::ondemand::object params_obj;
                 if (!ro["params"].get_object().get(params_obj)) {
@@ -423,7 +421,7 @@ void run_watch_tui(const std::string& state_path) {
         erase();
 
         attron(A_BOLD | COLOR_PAIR(1));
-        mvprintw(0, 0, "Martingale Optimizer  |  Combo: %zu/%zu  |  %s",
+        mvprintw(0, 0, "Martingale Optimizer  |  Gen: %zu/%zu  |  %s",
                  completed, total, is_done ? "COMPLETED" : "Watching live state");
         attroff(A_BOLD | COLOR_PAIR(1));
 
@@ -436,15 +434,13 @@ void run_watch_tui(const std::string& state_path) {
         // Column headers
         int const rank_w = 5;
         int const param_w = 28;
-        int const score_w = 12;
-        int const valid_w = 4;
+        int const cv_w = 12;
         int const metric_w = 12;
 
         int x = 0;
         mvprintw(2, x, "%-*s", rank_w, "Rank"); x += rank_w;
         mvprintw(2, x, "%-*s", param_w, "Params"); x += param_w;
-        mvprintw(2, x, "%-*s", score_w, "Score"); x += score_w;
-        mvprintw(2, x, "%-*s", valid_w, "Ok"); x += valid_w;
+        mvprintw(2, x, "%-*s", cv_w, "C Violation"); x += cv_w;
         for (const auto& sm : scoring) {
             std::string label = sm.metric.substr(0, 11);
             mvprintw(2, x, "%-*s", metric_w, label.c_str());
@@ -477,12 +473,7 @@ void run_watch_tui(const std::string& state_path) {
             if (params_str.size() > param_w) params_str = params_str.substr(0, param_w - 1);
             mvprintw(row, x, "%-*s", param_w, params_str.c_str()); x += param_w;
 
-            mvprintw(row, x, "%-*.4f", score_w, r.score); x += score_w;
-
-            attron(r.valid ? COLOR_PAIR(2) : COLOR_PAIR(3));
-            mvprintw(row, x, "%-*s", valid_w, r.valid ? "Y" : "N");
-            attroff(r.valid ? COLOR_PAIR(2) : COLOR_PAIR(3));
-            x += valid_w;
+            mvprintw(row, x, "%-*.6f", cv_w, r.constraint_violation); x += cv_w;
 
             for (const auto& sm : scoring) {
                 mvprintw(row, x, "%-*s", metric_w, format_metric(r.metrics, sm.metric).c_str());

@@ -103,12 +103,14 @@ static void write_analysis_json(const std::string& path, const Metrics& m,
     std::fprintf(f, "  \"total_return_pct\": %.4f,\n", total_return);
 
     std::fprintf(f, "  \"metrics\": {\n");
+    std::fprintf(f, "    \"adg_smoothed\": %.10f,\n", m.adg_smoothed);
     std::fprintf(f, "    \"adg_usd\": %.10f,\n", m.adg_usd);
     std::fprintf(f, "    \"adg_per_exponential_fit_error_usd\": %.10f,\n", m.adg_per_exponential_fit_error_usd);
     std::fprintf(f, "    \"adg_per_exposure_long_usd\": %.10f,\n", m.adg_per_exposure_long_usd);
     std::fprintf(f, "    \"adg_per_exposure_short_usd\": %.10f,\n", m.adg_per_exposure_short_usd);
     std::fprintf(f, "    \"calmar_ratio_usd\": %.10f,\n", m.calmar_ratio_usd);
     std::fprintf(f, "    \"drawdown_worst\": %.10f,\n", m.drawdown_worst);
+    std::fprintf(f, "    \"drawdown_worst_mean_1pct\": %.10f,\n", m.drawdown_worst_mean_1pct);
     std::fprintf(f, "    \"entry_initial_balance_pct_long\": %.10f,\n", m.entry_initial_balance_pct_long);
     std::fprintf(f, "    \"entry_initial_balance_pct_short\": %.10f,\n", m.entry_initial_balance_pct_short);
     std::fprintf(f, "    \"equity_balance_diff_neg_max_usd\": %.10f,\n", m.equity_balance_diff_neg_max_usd);
@@ -138,7 +140,7 @@ static void write_analysis_json(const std::string& path, const Metrics& m,
     std::fprintf(f, "    \"positions_held_per_day\": %.10f,\n", m.positions_held_per_day);
     std::fprintf(f, "    \"sharpe_ratio_usd\": %.10f,\n", m.sharpe_ratio_usd);
     std::fprintf(f, "    \"sortino_ratio_usd\": %.10f,\n", m.sortino_ratio_usd);
-    std::fprintf(f, "    \"sterling_ratio_usd\": %.10f,\n", m.sterling_ratio_usd);
+    std::fprintf(f, "    \"sterling_ratio\": %.10f,\n", m.sterling_ratio);
     std::fprintf(f, "    \"volume_pct_per_day_avg\": %.10f\n", m.volume_pct_per_day_avg);
     std::fprintf(f, "  }\n");
     std::fprintf(f, "}\n");
@@ -300,10 +302,8 @@ static bool read_live_state_best(const std::string& path,
         simdjson::ondemand::object ro;
         if (elem.get_object().get(ro)) continue;
 
-        bool valid = false;
-        bool v;
-        if (!ro["valid"].get_bool().get(v)) valid = v;
-        if (!valid) continue;
+        double cv = 0.0;
+        if (!ro["constraint_violation"].get_double().get(cv) && cv > 1e-10) continue;
 
         simdjson::ondemand::object params_obj;
         if (ro["params"].get_object().get(params_obj)) continue;
@@ -358,46 +358,63 @@ static void run_optimize(Config const& cfg, bool backtest_best, bool show_tui) {
             cfg.optimize.scoring, cfg.optimize.limits, 0);
     }
 
-    auto opt_callback = [&](const RunResult& rr, size_t current, size_t total) {
+    auto opt_callback = [&](const RunResult& rr, size_t gen, size_t n_gen) {
         if (tui) {
-            if (!tui->has_total() && total > 0) tui->set_total(total);
+            if (!tui->has_total() && n_gen > 0) tui->set_total(n_gen);
             tui->push_result(rr);
             if (tui->should_abort()) {
                 std::printf("\n  Optimization aborted by user.\n");
             }
-        } else if (current % 100 == 1 || current == total) {
-            std::printf("\r  %zu / %zu (%.1f%%) score=%.4f valid=%d    ",
-                        current, total,
-                        100.0 * static_cast<double>(current) / static_cast<double>(total),
-                        rr.score, rr.valid);
+        } else {
+            std::string obj_str;
+            for (size_t i = 0; i < rr.objectives.size(); ++i) {
+                if (i > 0) obj_str += " ";
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "%.4f", rr.objectives[i]);
+                obj_str += buf;
+            }
+            std::printf("\r  Gen %zu / %zu objectives=[%s] cv=%.6f  ",
+                        gen, n_gen, obj_str.c_str(), rr.constraint_violation);
             std::fflush(stdout);
         }
     };
 
     std::string results_path = res_dir + "/results";
-    std::vector<RunResult> const results = run_optimization(
-        cfg, per_symbol, symbols_info, results_path, opt_callback, 100, live_state);
+    OptimizerResult const opt_result = run_optimization(
+        cfg, per_symbol, symbols_info, results_path, opt_callback, live_state);
 
     if (tui) tui->finish();
     else std::printf("\n");
+
+    auto const& results = opt_result.all_results;
 
     if (results.empty()) {
         std::printf("  No valid results.\n");
         return;
     }
 
+    std::printf("  Pareto front size: %zu\n", opt_result.pareto_front.size());
+
     // Log top 5 to stdout
     std::printf("  Top 5 results:\n");
     for (size_t i = 0; i < std::min(size_t{5}, results.size()); ++i) {
         auto const& r = results[i];
-        std::printf("    #%zu: score=%.4f valid=%d\n", i + 1, r.score, r.valid);
+        std::string obj_str;
+        for (size_t j = 0; j < r.objectives.size(); ++j) {
+            if (j > 0) obj_str += " ";
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.4f", r.objectives[j]);
+            obj_str += buf;
+        }
+        std::printf("    #%zu: cv=%.6f objectives=[%s]\n",
+                    i + 1, r.constraint_violation, obj_str.c_str());
         for (const auto& [k, v] : r.params) {
             std::printf("      %s = %.4f\n", k.c_str(), v);
         }
     }
 
     // Backtest the best candidate if requested (inline)
-    if (backtest_best && !results.empty() && results[0].valid) {
+    if (backtest_best && !results.empty() && results[0].constraint_violation < 1e-10) {
         std::printf("\nBacktesting best candidate...\n");
         Config best_cfg = cfg;
         apply_params_to_cfg(best_cfg, results[0].params);

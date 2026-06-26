@@ -14,6 +14,7 @@ set(MARTINGALE_SOURCES
     metrics/calculator.cpp
     utils/thread_pool.cpp
     optimizer/optimizer.cpp
+    optimizer/nsga2.cpp
     ui/tui.cpp
 )
 
