@@ -14,6 +14,8 @@ struct RunResult {
     Metrics metrics;
     std::vector<double> objectives;
     double constraint_violation = 0.0;
+    int rank = 0;
+    double crowding_distance = 0.0;
     int generation = 0;
 };
 

@@ -473,8 +473,13 @@ void write_live_state(const std::string& path,
         if (i > 0) std::fputc(',', f);
         const auto& ind = sorted_population[i];
 
-        std::fprintf(f, "{\"constraint_violation\":%.10f,\"params\":{",
-                     ind.constraint_violation);
+        std::fprintf(f, "{\"rank\":%d,\"constraint_violation\":%.10f,\"objectives\":[",
+                     ind.rank, ind.constraint_violation);
+        for (size_t oi = 0; oi < ind.objectives.size(); ++oi) {
+            if (oi > 0) std::fputc(',', f);
+            std::fprintf(f, "%.10f", ind.objectives[oi]);
+        }
+        std::fprintf(f, "],\"params\":{");
         bool fp = true;
         for (size_t j = 0; j < ind.genes.size(); ++j) {
             if (!fp) std::fputc(',', f);
@@ -563,6 +568,8 @@ RunResult individual_to_result(const Individual& ind,
     rr.metrics = ind.metrics;
     rr.objectives = ind.objectives;
     rr.constraint_violation = ind.constraint_violation;
+    rr.rank = ind.rank;
+    rr.crowding_distance = ind.crowding_distance;
     rr.generation = ind.generation;
     return rr;
 }
@@ -768,31 +775,17 @@ OptimizerResult run_optimization(
         }
     }
 
-    // Sort all_results by constraint_violation ascending (lowest penalty first)
-    // then by average objective (lower is better in engine-space)
+    // Sort all_results by Pareto rank (ascending) then crowding distance (descending)
     std::sort(result.all_results.begin(), result.all_results.end(),
         [](const RunResult& a, const RunResult& b) {
-            if (a.constraint_violation != b.constraint_violation)
-                return a.constraint_violation < b.constraint_violation;
-            double a_sum = 0.0, b_sum = 0.0;
-            for (size_t i = 0; i < std::min(a.objectives.size(), b.objectives.size()); ++i) {
-                a_sum += a.objectives[i];
-                b_sum += b.objectives[i];
-            }
-            return a_sum < b_sum;
+            if (a.rank != b.rank) return a.rank < b.rank;
+            return a.crowding_distance > b.crowding_distance;
         });
 
-    // Sort pareto front by constraint_violation then average objective too
+    // Sort pareto front by crowding distance (descending)
     std::sort(result.pareto_front.begin(), result.pareto_front.end(),
         [](const RunResult& a, const RunResult& b) {
-            if (a.constraint_violation != b.constraint_violation)
-                return a.constraint_violation < b.constraint_violation;
-            double a_sum = 0.0, b_sum = 0.0;
-            for (size_t i = 0; i < std::min(a.objectives.size(), b.objectives.size()); ++i) {
-                a_sum += a.objectives[i];
-                b_sum += b.objectives[i];
-            }
-            return a_sum < b_sum;
+            return a.crowding_distance > b.crowding_distance;
         });
 
     // 11. Write Pareto JSON

@@ -4,7 +4,7 @@
   "date_from": "2020-01-01",
   "date_to": "2025-06-26",
   "initial_balance_usd": 10000.0,
-  "total_wallet_exposure": 2.0,
+  "total_wallet_exposure": 1.0,
   "strategy": {
     "entry_ema_period": 24,
     "entry_ema_distance_pct": 0.01,
@@ -35,7 +35,7 @@
 	{ "metric": "mdg_usd", "goal": "max", "weight": 2.0 }
     ],
     "ga": {
-	"population_size": 250,
+	"population_size": 1000,
 	"n_generations": 500,
 	"crossover_prob": 0.8,
 	"crossover_eta": 15.0,
@@ -51,7 +51,7 @@
 	"close_grid_count": [1, 5, 1],
 	"entry_ema_distance_pct": [0.001, 0.01, 0.0001],
 	"entry_grid_spacing_pct": [0.001, 0.05, 0.001],
-	"sl_upnl_pct": [-0.5, -0.01],
+	"sl_upnl_pct": [-0.5, 0.5],
 	"n_positions": [1, 1],
 	"parkinson_volatility_span": [1, 24],
 	"time_based_unstuck_pct": [0.1, 0.3, 0.01],

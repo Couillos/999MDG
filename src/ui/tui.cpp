@@ -85,17 +85,11 @@ void OptimizerTUI::draw_ui() {
         sorted = results_;
     }
 
-    // Sort by constraint_violation (ascending) then avg objective (ascending, engine-space)
+    // Sort by Pareto rank (ascending) then crowding distance (descending)
     std::sort(sorted.begin(), sorted.end(),
         [](const RunResult& a, const RunResult& b) {
-            if (a.constraint_violation != b.constraint_violation)
-                return a.constraint_violation < b.constraint_violation;
-            double a_sum = 0.0, b_sum = 0.0;
-            for (size_t i = 0; i < std::min(a.objectives.size(), b.objectives.size()); ++i) {
-                a_sum += a.objectives[i];
-                b_sum += b.objectives[i];
-            }
-            return a_sum < b_sum;
+            if (a.rank != b.rank) return a.rank < b.rank;
+            return a.crowding_distance > b.crowding_distance;
         });
 
     size_t const n = std::min(size_t{25}, sorted.size());
@@ -115,10 +109,10 @@ void OptimizerTUI::draw_ui() {
         return;
     }
 
-    // Build column headers
+    // Build column headers: Pareto rank, params, objectives, limits
     int const rank_w = 5;
     int const param_w = 28;
-    int const cv_w = 12;
+    int const objs_w = 12;
     int const metric_w = 12;
 
     int x = 0;
@@ -126,13 +120,11 @@ void OptimizerTUI::draw_ui() {
     x += rank_w;
     mvprintw(2, x, "%-*s", param_w, "Params");
     x += param_w;
-    mvprintw(2, x, "%-*s", cv_w, "C Violation");
-    x += cv_w;
 
     for (const auto& sm : scoring_) {
         std::string label = sm.metric.substr(0, 11);
-        mvprintw(2, x, "%-*s", metric_w, label.c_str());
-        x += metric_w;
+        mvprintw(2, x, "%-*s", objs_w, label.c_str());
+        x += objs_w;
     }
     for (const auto& [name, _] : limits_) {
         std::string label = name.substr(0, 11);
@@ -152,10 +144,12 @@ void OptimizerTUI::draw_ui() {
         const auto& r = sorted[i];
 
         x = 0;
-        mvprintw(row, x, "%-*zu", rank_w, i + 1);
+        int const pair = r.rank == 1 ? 2 : (r.constraint_violation < 1e-10 ? 1 : 3);
+        attron(COLOR_PAIR(pair));
+        mvprintw(row, x, "%-*d", rank_w, r.rank);
+        attroff(COLOR_PAIR(pair));
         x += rank_w;
 
-        // Params string
         std::string params_str;
         for (const auto& [k, v] : r.params) {
             if (!params_str.empty()) params_str += " ";
@@ -168,13 +162,10 @@ void OptimizerTUI::draw_ui() {
         mvprintw(row, x, "%-*s", param_w, params_str.c_str());
         x += param_w;
 
-        mvprintw(row, x, "%-*.6f", cv_w, r.constraint_violation);
-        x += cv_w;
-
         for (const auto& sm : scoring_) {
             std::string val = metric_value(r.metrics, sm.metric);
-            mvprintw(row, x, "%-*s", metric_w, val.c_str());
-            x += metric_w;
+            mvprintw(row, x, "%-*s", objs_w, val.c_str());
+            x += objs_w;
         }
         for (const auto& [name, _] : limits_) {
             std::string val = metric_value(r.metrics, name);
@@ -388,8 +379,17 @@ void run_watch_tui(const std::string& state_path) {
                 simdjson::ondemand::object ro;
                 if (elem.get_object().get(ro)) continue;
                 RunResult rr{};
+                int64_t rv;
+                if (!ro["rank"].get_int64().get(rv)) rr.rank = static_cast<int>(rv);
                 double cv;
                 if (!ro["constraint_violation"].get_double().get(cv)) rr.constraint_violation = cv;
+                simdjson::ondemand::array obj_arr;
+                if (!ro["objectives"].get_array().get(obj_arr)) {
+                    for (auto oe : obj_arr) {
+                        double ov;
+                        if (!oe.get_double().get(ov)) rr.objectives.push_back(ov);
+                    }
+                }
 
                 simdjson::ondemand::object params_obj;
                 if (!ro["params"].get_object().get(params_obj)) {
@@ -431,20 +431,28 @@ void run_watch_tui(const std::string& state_path) {
             continue;
         }
 
+        // Sort by Pareto rank (ascending) then objectives for display
+        std::sort(top.begin(), top.end(),
+            [](const RunResult& a, const RunResult& b) {
+                if (a.rank != b.rank) return a.rank < b.rank;
+                if (a.constraint_violation != b.constraint_violation)
+                    return a.constraint_violation < b.constraint_violation;
+                return a.crowding_distance > b.crowding_distance;
+            });
+
         // Column headers
         int const rank_w = 5;
         int const param_w = 28;
-        int const cv_w = 12;
+        int const objs_w = 12;
         int const metric_w = 12;
 
         int x = 0;
         mvprintw(2, x, "%-*s", rank_w, "Rank"); x += rank_w;
         mvprintw(2, x, "%-*s", param_w, "Params"); x += param_w;
-        mvprintw(2, x, "%-*s", cv_w, "C Violation"); x += cv_w;
         for (const auto& sm : scoring) {
             std::string label = sm.metric.substr(0, 11);
-            mvprintw(2, x, "%-*s", metric_w, label.c_str());
-            x += metric_w;
+            mvprintw(2, x, "%-*s", objs_w, label.c_str());
+            x += objs_w;
         }
         for (const auto& [name, _] : limits) {
             std::string label = name.substr(0, 11);
@@ -460,7 +468,12 @@ void run_watch_tui(const std::string& state_path) {
             int row = static_cast<int>(i) + 4;
             const auto& r = top[i];
             x = 0;
-            mvprintw(row, x, "%-*zu", rank_w, i + 1); x += rank_w;
+
+            int const pair = r.rank == 1 ? 2 : (r.constraint_violation < 1e-10 ? 1 : 3);
+            attron(COLOR_PAIR(pair));
+            mvprintw(row, x, "%-*d", rank_w, r.rank);
+            attroff(COLOR_PAIR(pair));
+            x += rank_w;
 
             std::string params_str;
             for (const auto& [k, v] : r.params) {
@@ -473,11 +486,9 @@ void run_watch_tui(const std::string& state_path) {
             if (params_str.size() > param_w) params_str = params_str.substr(0, param_w - 1);
             mvprintw(row, x, "%-*s", param_w, params_str.c_str()); x += param_w;
 
-            mvprintw(row, x, "%-*.6f", cv_w, r.constraint_violation); x += cv_w;
-
             for (const auto& sm : scoring) {
-                mvprintw(row, x, "%-*s", metric_w, format_metric(r.metrics, sm.metric).c_str());
-                x += metric_w;
+                mvprintw(row, x, "%-*s", objs_w, format_metric(r.metrics, sm.metric).c_str());
+                x += objs_w;
             }
             for (const auto& [name, _] : limits) {
                 mvprintw(row, x, "%-*s", metric_w, format_metric(r.metrics, name).c_str());
