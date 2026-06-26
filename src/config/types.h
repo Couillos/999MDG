@@ -57,7 +57,7 @@ struct OptimizeConfig {
     size_t max_iterations;
     std::map<std::string, Limit> limits;
     std::vector<ScoringMetric> scoring;
-    std::map<std::string, std::array<double, 2>> bounds;
+    std::map<std::string, std::array<double, 3>> bounds;
 };
 
 /// Top-level configuration deserialized from the JSON config file.

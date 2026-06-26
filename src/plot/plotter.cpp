@@ -88,10 +88,12 @@ void Plotter::exposure_chart() {
     }
 
     std::string const csv = dir_ + "/data/exposure.csv";
+    double const max_exposure = cfg_.initial_balance_usd * cfg_.total_wallet_exposure;
     chart_preamble(gp, "exposure_chart.png");
+    cmd(gp, "set ylabel textcolor rgb '%s' \"Exposure (%% of max)\"\n", plot::TEXT);
     cmd(gp, "set title textcolor rgb '%s' font ',14' \"Capital Exposure — %s\"\n", plot::TEXT, title().c_str());
-    cmd(gp, "plot '%s' every ::1 using ($1/1000):2 with lines lw 2 lc rgb '%s' title 'Exposure', ", csv.c_str(), plot::EXPOSURE);
-    cmd(gp, "%.2f with lines dt 3 lw 1 lc rgb '%s' title 'Initial Balance'\n", cfg_.initial_balance_usd, plot::BALANCE);
+    cmd(gp, "plot '%s' every ::1 using ($1/1000):($2 / %.2f * 100) with lines lw 2 lc rgb '%s' title 'Exposure %%', ", csv.c_str(), max_exposure, plot::EXPOSURE);
+    cmd(gp, "100 with lines dt 3 lw 1 lc rgb '%s' title 'Max Exposure'\n", plot::BALANCE);
 
     int const ret = pclose(gp);
     if (ret == 0) {

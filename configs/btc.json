@@ -34,18 +34,19 @@
 	{ "metric": "mdg_usd", "weight": 1.0 }
     ],
     "bounds": {
-	"entry_ema_period": [4, 24],
-	"initial_qty_pct": [0.01, 0.03],
-	"close_grid_spacing_pct": [0.001, 0.03],
-	"close_grid_count": [1, 5],
-	"entry_ema_distance_pct": [0.001, 0.01],
-	"entry_grid_spacing_pct": [0.001, 0.05],
+	"entry_ema_period": [4, 24, 1],
+	"initial_qty_pct": [0.01, 0.03, 0.001],
+	"double_down_factor": [0.2, 1.5, 0.1],
+	"close_grid_spacing_pct": [0.001, 0.03, 0.001],
+	"close_grid_count": [1, 5, 1],
+	"entry_ema_distance_pct": [0.001, 0.01, 0.0001],
+	"entry_grid_spacing_pct": [0.001, 0.05, 0.001],
 	"sl_upnl_pct": [-0.5, -0.01],
 	"n_positions": [1, 1],
 	"parkinson_volatility_span": [1, 24],
-	"time_based_unstuck_pct": [0.1, 0.3],
+	"time_based_unstuck_pct": [0.1, 0.3, 0.01],
 	"time_based_unstuck_threshold": [0.03, 0.03],
-	"time_based_unstuck_age": [24, 168]
+	"time_based_unstuck_age": [24, 168, 24]
     }
   },
   "output": {

@@ -24,11 +24,27 @@ bool is_int_param(const std::string& name) {
 }
 
 std::vector<double> axis_values(const std::string& name,
-                                const std::array<double, 2>& bound) {
+                                const std::array<double, 3>& bound) {
     double const lo = bound[0];
     double const hi = bound[1];
+    double const step = bound[2];
     if (std::abs(lo - hi) < 1e-15) {
         return {lo};
+    }
+    if (step > 0.0) {
+        std::vector<double> vals;
+        if (is_int_param(name)) {
+            int const istep = static_cast<int>(step);
+            if (istep < 1) return {lo};
+            int const imin = static_cast<int>(std::ceil(lo));
+            int const imax_val = static_cast<int>(std::floor(hi));
+            for (int v = imin; v <= imax_val; v += istep)
+                vals.push_back(static_cast<double>(v));
+        } else {
+            for (double v = lo; v <= hi + 1e-12; v += step)
+                vals.push_back(v);
+        }
+        return vals;
     }
     if (is_int_param(name)) {
         int const imin = static_cast<int>(std::ceil(lo));
@@ -61,7 +77,7 @@ struct ParamAxis {
 };
 
 std::vector<ParamAxis> build_axes(
-    const std::map<std::string, std::array<double, 2>>& bounds) {
+    const std::map<std::string, std::array<double, 3>>& bounds) {
     std::vector<ParamAxis> axes;
     axes.reserve(bounds.size());
     for (const auto& [name, bound] : bounds) {
@@ -337,11 +353,16 @@ std::vector<RunResult> run_optimization(
     if (total == 0) return {};
 
     // Cap to max_iterations if set
+    size_t constexpr MAX_COMBOS = 100000;
+    size_t const original_total = total;
     size_t const max_iter = cfg.optimize.max_iterations;
     if (max_iter > 0 && total > max_iter) {
         std::printf("  Capped to %zu iterations (max_iterations)\n", max_iter);
         total = max_iter;
     }
+
+    // Check random sampling against original total before max_iter cap
+    bool const random_sample = original_total > MAX_COMBOS;
 
     // Min-heap: smallest score at front (pop weakest when full)
     auto cmp = [](const RunResult& a, const RunResult& b) {
@@ -366,11 +387,8 @@ std::vector<RunResult> run_optimization(
     std::vector<size_t> sizes(n_axes);
     for (size_t i = 0; i < n_axes; ++i) sizes[i] = axes[i].values.size();
 
-    constexpr size_t MAX_COMBOS = 100000;
-    bool const random_sample = total > MAX_COMBOS;
-
     if (random_sample) {
-        std::printf("  Grid too large (%zu), random sampling %zu combos\n", total, MAX_COMBOS);
+        std::printf("  Grid too large (%zu), random sampling %zu combos\n", original_total, total);
     }
     std::printf("  Running sequentially...\n");
 
@@ -389,8 +407,8 @@ std::vector<RunResult> run_optimization(
         auto const bt = run_backtest(local_cfg, per_symbol_candles, symbols_info, "");
         auto const metrics = compute_metrics(bt.equity_curve, local_cfg);
 
+        double const score = compute_score(metrics, scoring);
         bool const valid = check_limits(metrics, limits);
-        double const score = valid ? compute_score(metrics, scoring) : 0.0;
 
         RunResult rr;
         for (size_t i = 0; i < n_axes; ++i) {
@@ -414,7 +432,7 @@ std::vector<RunResult> run_optimization(
         }
 
         if (callback) {
-            callback(rr, seq_idx + 1, random_sample ? MAX_COMBOS : total);
+            callback(rr, seq_idx + 1, total);
         }
 
         ++live_counter;
@@ -423,18 +441,17 @@ std::vector<RunResult> run_optimization(
             auto sorted_copy = top_results;
             std::sort(sorted_copy.begin(), sorted_copy.end(),
                 [](const RunResult& a, const RunResult& b) { return a.score > b.score; });
-            write_live_state(live_state_path, live_counter,
-                             random_sample ? MAX_COMBOS : total,
+            write_live_state(live_state_path, live_counter, total,
                              sorted_copy, scoring, limits);
         }
     };
 
     if (random_sample) {
-        // Random sampling: pick MAX_COMBOS random linear indices
+        // Random sampling: pick `total` random linear indices
         std::mt19937_64 rng(std::random_device{}());
         std::vector<size_t> indices(n_axes);
-        for (size_t s = 0; s < MAX_COMBOS; ++s) {
-            size_t linear = std::uniform_int_distribution<size_t>{0, total - 1}(rng);
+        for (size_t s = 0; s < total; ++s) {
+            size_t linear = std::uniform_int_distribution<size_t>{0, original_total - 1}(rng);
             // Convert linear index to cartesian (mixed-radix, last axis is fastest)
             for (int p = static_cast<int>(n_axes) - 1; p >= 0; --p) {
                 indices[static_cast<size_t>(p)] = linear % sizes[static_cast<size_t>(p)];
@@ -460,12 +477,11 @@ std::vector<RunResult> run_optimization(
 
     // Final live state write (ensure done=true is captured)
     if (!live_state_path.empty()) {
-        auto final_total = random_sample ? MAX_COMBOS : total;
         // Sort a copy for the final state
         auto sorted_copy = top_results;
         std::sort(sorted_copy.begin(), sorted_copy.end(),
             [](const RunResult& a, const RunResult& b) { return a.score > b.score; });
-        write_live_state(live_state_path, final_total, final_total,
+        write_live_state(live_state_path, total, total,
                          sorted_copy, scoring, limits);
     }
 

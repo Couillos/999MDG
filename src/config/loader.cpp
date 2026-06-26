@@ -144,10 +144,11 @@ OptimizeConfig parse_optimize(simdjson::ondemand::object opt) {
             if (field.value().get_array().get(arr)) {
                 continue;
             }
-            std::array<double, 2> bnd{};
+            std::array<double, 3> bnd{};
+            bnd[2] = 0.0;  // default: auto step
             size_t idx = 0;
             for (auto elem : arr) {
-                if (idx >= 2) {
+                if (idx >= 3) {
                     break;
                 }
                 double v;
