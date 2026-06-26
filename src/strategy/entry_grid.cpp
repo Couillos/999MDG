@@ -18,7 +18,7 @@ void process_entries(const Config& strat, const SymbolInfo& info,
                      int& total_positions, Position& pos,
                      bool is_active, double ema) {
     // Skip if not active and no existing position
-    if (!is_active && pos.total_qty == 0.0) {
+    if (!is_active && std::abs(pos.total_qty) < 1e-12) {
         return;
     }
 
@@ -31,7 +31,7 @@ void process_entries(const Config& strat, const SymbolInfo& info,
     double const slot_capital = (total_balance * strat.total_wallet_exposure)
                               / static_cast<double>(strat.strategy.n_positions);
 
-    if (pos.total_qty == 0.0) {
+    if (std::abs(pos.total_qty) < 1e-12) {
         // First entry into this symbol
         if (total_positions >= strat.strategy.n_positions) {
             return;

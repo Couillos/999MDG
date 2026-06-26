@@ -251,7 +251,8 @@ void write_live_state(const std::string& path,
     FILE* f = std::fopen(tmp_path.c_str(), "w");
     if (!f) return;
 
-    std::fprintf(f, "{\"completed\":%zu,\"total\":%zu,", completed, total);
+    std::fprintf(f, "{\"done\":%s,\"completed\":%zu,\"total\":%zu,",
+                 completed >= total ? "true" : "false", completed, total);
 
     // scoring
     std::fprintf(f, "\"scoring\":[");
@@ -291,24 +292,23 @@ void write_live_state(const std::string& path,
             fp = false;
             std::fprintf(f, "\"%s\":%.10f", k.c_str(), v);
         }
-        std::fprintf(f, "},\"metrics\":{"
-                        "\"adg_usd\":%.10f"
-                        ",\"sharpe_ratio_usd\":%.10f"
-                        ",\"sortino_ratio_usd\":%.10f"
-                        ",\"calmar_ratio_usd\":%.10f"
-                        ",\"drawdown_worst\":%.10f"
-                        ",\"mdg_usd\":%.10f"
-                        ",\"gain_usd\":%.10f"
-                        ",\"loss_profit_ratio\":%.10f"
-                        "}}",
-                     r.metrics.adg_usd,
-                     r.metrics.sharpe_ratio_usd,
-                     r.metrics.sortino_ratio_usd,
-                     r.metrics.calmar_ratio_usd,
-                     r.metrics.drawdown_worst,
-                     r.metrics.mdg_usd,
-                     r.metrics.gain_usd,
-                     r.metrics.loss_profit_ratio);
+        // Write all scoring + limit metrics dynamically
+        std::vector<std::string> all_metric_names;
+        for (const auto& sm : scoring) all_metric_names.push_back(sm.metric);
+        for (const auto& [name, _] : limits) all_metric_names.push_back(name);
+        std::sort(all_metric_names.begin(), all_metric_names.end());
+        all_metric_names.erase(
+            std::unique(all_metric_names.begin(), all_metric_names.end()),
+            all_metric_names.end());
+
+        std::fprintf(f, "},\"metrics\":{");
+        for (size_t mi = 0; mi < all_metric_names.size(); ++mi) {
+            if (mi > 0) std::fputc(',', f);
+            std::fprintf(f, "\"%s\":%.10f",
+                         all_metric_names[mi].c_str(),
+                         get_metric_value(r.metrics, all_metric_names[mi]));
+        }
+        std::fprintf(f, "}}");
     }
     std::fprintf(f, "]}\n");
     std::fclose(f);
@@ -456,6 +456,17 @@ std::vector<RunResult> run_optimization(
                 indices[pos] = 0;
             }
         }
+    }
+
+    // Final live state write (ensure done=true is captured)
+    if (!live_state_path.empty()) {
+        auto final_total = random_sample ? MAX_COMBOS : total;
+        // Sort a copy for the final state
+        auto sorted_copy = top_results;
+        std::sort(sorted_copy.begin(), sorted_copy.end(),
+            [](const RunResult& a, const RunResult& b) { return a.score > b.score; });
+        write_live_state(live_state_path, final_total, final_total,
+                         sorted_copy, scoring, limits);
     }
 
     if (tmp_file) {

@@ -142,7 +142,7 @@ BacktestResult run_backtest(const Config& cfg,
 
         // Step a: process_closes for all symbols with open positions
         for (size_t s = 0; s < n; ++s) {
-            if (positions[s].total_qty > 0.0) {
+            if (positions[s].total_qty > 1e-12) {
                 process_closes(cfg, symbols_info[s], *current_candles[s],
                                positions[s], total_positions);
             }

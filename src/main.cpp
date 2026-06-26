@@ -381,9 +381,6 @@ static void run_optimize(Config const& cfg, bool backtest_best, bool show_tui) {
     if (tui) tui->finish();
     else std::printf("\n");
 
-    // Clean up live state file
-    std::remove(live_state.c_str());
-
     if (results.empty()) {
         std::printf("  No valid results.\n");
         return;

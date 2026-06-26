@@ -47,14 +47,16 @@ double mean(const std::vector<double>& v) {
 double median(std::vector<double> v) {
     if (v.empty()) return 0.0;
     size_t const n = v.size();
-    auto mid = v.begin() + n / 2;
-    std::nth_element(v.begin(), mid, v.end());
-    if (n % 2 == 0) {
-        auto mid1 = v.begin() + n / 2 - 1;
-        std::nth_element(v.begin(), mid1, v.end());
-        return (*mid + *mid1) / 2.0;
+    if (n % 2 == 1) {
+        auto mid = v.begin() + n / 2;
+        std::nth_element(v.begin(), mid, v.end());
+        return *mid;
     }
-    return *mid;
+    auto mid1 = v.begin() + n / 2 - 1;
+    auto mid2 = v.begin() + n / 2;
+    std::nth_element(v.begin(), mid1, v.end());
+    std::nth_element(v.begin(), mid2, v.end());
+    return (*mid1 + *mid2) / 2.0;
 }
 
 /// Computes population standard deviation.

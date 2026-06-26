@@ -44,8 +44,13 @@ void process_closes(const Config& strat, const SymbolInfo& info,
         pos.traded_qty += close_qty;
     }
 
+    // Guard against floating-point residuals that prevent position tracking
+    if (std::abs(pos.total_qty) < 1e-12) {
+        pos.total_qty = 0.0;
+    }
+
     // If position fully closed via grid, decrement total_positions
-    if (pos.total_qty == 0.0 && total_positions > 0) {
+    if (pos.total_qty <= 0.0 && total_positions > 0) {
         total_positions -= 1;
     }
 }

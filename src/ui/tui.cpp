@@ -240,6 +240,46 @@ std::string format_metric(const Metrics& m, const std::string& name) {
     if (name == "volume_pct_per_day_avg") return get(m.volume_pct_per_day_avg);
     return get(0.0);
 }
+void set_metric_value(Metrics& m, const std::string& name, double val) {
+    if (name == "adg_usd") { m.adg_usd = val; return; }
+    if (name == "adg_per_exponential_fit_error_usd") { m.adg_per_exponential_fit_error_usd = val; return; }
+    if (name == "adg_per_exposure_long_usd") { m.adg_per_exposure_long_usd = val; return; }
+    if (name == "adg_per_exposure_short_usd") { m.adg_per_exposure_short_usd = val; return; }
+    if (name == "calmar_ratio_usd") { m.calmar_ratio_usd = val; return; }
+    if (name == "drawdown_worst") { m.drawdown_worst = val; return; }
+    if (name == "entry_initial_balance_pct_long") { m.entry_initial_balance_pct_long = val; return; }
+    if (name == "entry_initial_balance_pct_short") { m.entry_initial_balance_pct_short = val; return; }
+    if (name == "equity_balance_diff_neg_max_usd") { m.equity_balance_diff_neg_max_usd = val; return; }
+    if (name == "equity_balance_diff_neg_mean_usd") { m.equity_balance_diff_neg_mean_usd = val; return; }
+    if (name == "equity_balance_diff_pos_max_usd") { m.equity_balance_diff_pos_max_usd = val; return; }
+    if (name == "equity_balance_diff_pos_mean_usd") { m.equity_balance_diff_pos_mean_usd = val; return; }
+    if (name == "equity_choppiness_usd") { m.equity_choppiness_usd = val; return; }
+    if (name == "equity_jerkiness_usd") { m.equity_jerkiness_usd = val; return; }
+    if (name == "expected_shortfall_1pct_usd") { m.expected_shortfall_1pct_usd = val; return; }
+    if (name == "exponential_fit_error_usd") { m.exponential_fit_error_usd = val; return; }
+    if (name == "gain_usd") { m.gain_usd = val; return; }
+    if (name == "gain_per_exposure_long_usd") { m.gain_per_exposure_long_usd = val; return; }
+    if (name == "gain_per_exposure_short_usd") { m.gain_per_exposure_short_usd = val; return; }
+    if (name == "loss_profit_ratio") { m.loss_profit_ratio = val; return; }
+    if (name == "loss_profit_ratio_long") { m.loss_profit_ratio_long = val; return; }
+    if (name == "loss_profit_ratio_short") { m.loss_profit_ratio_short = val; return; }
+    if (name == "mdg_usd") { m.mdg_usd = val; return; }
+    if (name == "mdg_per_exponential_fit_error_usd") { m.mdg_per_exponential_fit_error_usd = val; return; }
+    if (name == "mdg_per_exposure_long_usd") { m.mdg_per_exposure_long_usd = val; return; }
+    if (name == "mdg_per_exposure_short_usd") { m.mdg_per_exposure_short_usd = val; return; }
+    if (name == "omega_ratio_usd") { m.omega_ratio_usd = val; return; }
+    if (name == "peak_recovery_hours_equity_usd") { m.peak_recovery_hours_equity_usd = val; return; }
+    if (name == "position_held_hours_max") { m.position_held_hours_max = val; return; }
+    if (name == "position_held_hours_mean") { m.position_held_hours_mean = val; return; }
+    if (name == "position_held_hours_median") { m.position_held_hours_median = val; return; }
+    if (name == "position_unchanged_hours_max") { m.position_unchanged_hours_max = val; return; }
+    if (name == "positions_held_per_day") { m.positions_held_per_day = val; return; }
+    if (name == "sharpe_ratio_usd") { m.sharpe_ratio_usd = val; return; }
+    if (name == "sortino_ratio_usd") { m.sortino_ratio_usd = val; return; }
+    if (name == "sterling_ratio_usd") { m.sterling_ratio_usd = val; return; }
+    if (name == "volume_pct_per_day_avg") { m.volume_pct_per_day_avg = val; return; }
+}
+
 } // anonymous namespace
 
 std::string OptimizerTUI::metric_value(const Metrics& m, const std::string& name) const {
@@ -303,6 +343,10 @@ void run_watch_tui(const std::string& state_path) {
         size_t completed = static_cast<size_t>(completed_u);
         size_t total = static_cast<size_t>(total_u);
 
+        bool is_done = false;
+        bool done_val;
+        if (!root["done"].get_bool().get(done_val)) is_done = done_val;
+
         // Parse scoring
         std::vector<ScoringMetric> scoring;
         simdjson::ondemand::array scoring_arr;
@@ -362,23 +406,13 @@ void run_watch_tui(const std::string& state_path) {
 
                 simdjson::ondemand::object metrics_obj;
                 if (!ro["metrics"].get_object().get(metrics_obj)) {
-                    double mv;
-                    if (!metrics_obj["sharpe_ratio_usd"].get_double().get(mv))
-                        rr.metrics.sharpe_ratio_usd = mv;
-                    if (!metrics_obj["sortino_ratio_usd"].get_double().get(mv))
-                        rr.metrics.sortino_ratio_usd = mv;
-                    if (!metrics_obj["calmar_ratio_usd"].get_double().get(mv))
-                        rr.metrics.calmar_ratio_usd = mv;
-                    if (!metrics_obj["drawdown_worst"].get_double().get(mv))
-                        rr.metrics.drawdown_worst = mv;
-                    if (!metrics_obj["mdg_usd"].get_double().get(mv))
-                        rr.metrics.mdg_usd = mv;
-                    if (!metrics_obj["gain_usd"].get_double().get(mv))
-                        rr.metrics.gain_usd = mv;
-                    if (!metrics_obj["adg_usd"].get_double().get(mv))
-                        rr.metrics.adg_usd = mv;
-                    if (!metrics_obj["loss_profit_ratio"].get_double().get(mv))
-                        rr.metrics.loss_profit_ratio = mv;
+                    for (auto mf : metrics_obj) {
+                        std::string_view mk;
+                        if (mf.unescaped_key().get(mk)) continue;
+                        double mv;
+                        if (!mf.value().get_double().get(mv))
+                            set_metric_value(rr.metrics, std::string(mk), mv);
+                    }
                 }
 
                 top.push_back(rr);
@@ -389,8 +423,8 @@ void run_watch_tui(const std::string& state_path) {
         erase();
 
         attron(A_BOLD | COLOR_PAIR(1));
-        mvprintw(0, 0, "Martingale Optimizer  |  Combo: %zu/%zu  |  Watching live state",
-                 completed, total);
+        mvprintw(0, 0, "Martingale Optimizer  |  Combo: %zu/%zu  |  %s",
+                 completed, total, is_done ? "COMPLETED" : "Watching live state");
         attroff(A_BOLD | COLOR_PAIR(1));
 
         if (top.empty()) {
@@ -460,7 +494,8 @@ void run_watch_tui(const std::string& state_path) {
             }
         }
 
-        mvprintw(static_cast<int>(n) + 5, 0, " Watching live state. Press 'q' to quit.");
+        mvprintw(static_cast<int>(n) + 5, 0, " %s Press 'q' to quit.",
+                 is_done ? "Optimization complete. Results preserved." : "Watching live state.");
         refresh();
     }
 

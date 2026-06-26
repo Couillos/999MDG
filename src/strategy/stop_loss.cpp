@@ -5,7 +5,7 @@
 namespace martingale {
 
 bool check_stop_loss(const Config& strat, const Candle& candle, Position& pos) {
-    if (pos.total_qty == 0.0) {
+    if (std::abs(pos.total_qty) < 1e-12) {
         return false;
     }
 
