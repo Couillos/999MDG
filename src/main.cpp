@@ -281,32 +281,52 @@ static void apply_params_to_cfg(Config& cfg, const std::map<std::string, double>
     cfg.warmup_candles = (a > b) ? a : b;
 }
 
-/// Read the live state JSON and return the best RunResult (top of top array).
-/// Returns false if file cannot be read or parsed.
-static bool read_live_state_best(const std::string& path,
-                                 std::map<std::string, double>& out_params) {
+/// Find the most recent pareto JSON in results/optimize/*/ and read the first entry's params.
+/// Returns false if nothing found.
+static bool read_pareto_best(const std::string& base_path,
+                             std::map<std::string, double>& out_params) {
+    namespace fs = std::filesystem;
+    std::string const optimize_dir = base_path + "/optimize";
+    if (!fs::is_directory(optimize_dir)) return false;
+
+    // Find most recent subdirectory by name (YYYY-MM-DD_HH-MM-SS)
+    fs::path latest;
+    for (auto const& entry : fs::directory_iterator(optimize_dir)) {
+        if (!entry.is_directory()) continue;
+        if (latest.empty() || entry.path().filename() > latest.filename()) {
+            latest = entry.path();
+        }
+    }
+    if (latest.empty()) return false;
+
+    // Look for _pareto.json
+    fs::path pareto_path;
+    for (auto const& entry : fs::directory_iterator(latest)) {
+        std::string name = entry.path().filename().string();
+        if (name.find("_pareto.json") != std::string::npos && name.size() > 12) {
+            pareto_path = entry.path();
+            break;
+        }
+    }
+    if (pareto_path.empty()) return false;
+
+    // Read JSON array, take first entry's params
     simdjson::padded_string json_data;
-    if (simdjson::padded_string::load(path).get(json_data)) return false;
+    if (simdjson::padded_string::load(pareto_path.string()).get(json_data)) return false;
 
     simdjson::ondemand::parser parser;
     simdjson::ondemand::document doc;
     if (parser.iterate(json_data).get(doc)) return false;
 
-    simdjson::ondemand::object root;
-    if (doc.get_object().get(root)) return false;
+    simdjson::ondemand::array arr;
+    if (doc.get_array().get(arr)) return false;
 
-    simdjson::ondemand::array top_arr;
-    if (root["top"].get_array().get(top_arr)) return false;
-
-    for (auto elem : top_arr) {
-        simdjson::ondemand::object ro;
-        if (elem.get_object().get(ro)) continue;
-
-        double cv = 0.0;
-        if (!ro["constraint_violation"].get_double().get(cv) && cv > 1e-10) continue;
+    for (auto elem : arr) {
+        simdjson::ondemand::object entry;
+        if (elem.get_object().get(entry)) continue;
 
         simdjson::ondemand::object params_obj;
-        if (ro["params"].get_object().get(params_obj)) continue;
+        if (entry["params"].get_object().get(params_obj)) continue;
 
         for (auto pf : params_obj) {
             std::string_view pk;
@@ -444,24 +464,55 @@ int main(int argc, char** argv) {
 
     if (std::strcmp(argv[1], "--backtest-best") == 0) {
         Config cfg = load_config(config_path, Mode::OPTIMIZE);
-        std::string const live_state = cfg.output.dir + "/optimize/.live_state";
+        std::string const base = cfg.output.dir;
 
         std::map<std::string, double> best_params;
-        if (!read_live_state_best(live_state, best_params)) {
-            std::fprintf(stderr, "No live optimization state found (file: %s)\n",
-                         live_state.c_str());
+        if (!read_pareto_best(base, best_params)) {
+            // Fallback: try live state
+            std::string const live_state = base + "/optimize/.live_state";
+            simdjson::padded_string json_data;
+            if (!simdjson::padded_string::load(live_state).get(json_data)) {
+                simdjson::ondemand::parser parser;
+                simdjson::ondemand::document doc;
+                if (!parser.iterate(json_data).get(doc)) {
+                    simdjson::ondemand::object root;
+                    if (!doc.get_object().get(root)) {
+                        simdjson::ondemand::array top_arr;
+                        if (!root["top"].get_array().get(top_arr)) {
+                            for (auto elem : top_arr) {
+                                simdjson::ondemand::object ro;
+                                if (elem.get_object().get(ro)) continue;
+                                double cv = 0.0;
+                                if (!ro["constraint_violation"].get_double().get(cv) && cv > 1e-10) continue;
+                                simdjson::ondemand::object params_obj;
+                                if (ro["params"].get_object().get(params_obj)) continue;
+                                for (auto pf : params_obj) {
+                                    std::string_view pk;
+                                    if (pf.unescaped_key().get(pk)) continue;
+                                    double pv;
+                                    if (!pf.value().get_double().get(pv))
+                                        best_params[std::string(pk)] = pv;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (best_params.empty()) {
+            std::fprintf(stderr, "No optimization results found. Run 'optimize' first.\n");
             return 1;
         }
 
-        std::printf("Best params from live optimization:\n");
+        std::printf("Best params from most recent optimization:\n");
         for (const auto& [k, v] : best_params) {
             std::printf("  %s = %.4f\n", k.c_str(), v);
         }
 
         apply_params_to_cfg(cfg, best_params);
 
-        // Run backtest in a subdirectory of the live results dir
-        std::string best_dir = cfg.output.dir + "/optimize/best_from_live";
+        std::string best_dir = base + "/optimize/best_from_live";
         std::error_code ec;
         std::filesystem::create_directories(best_dir, ec);
         backtest_and_report(cfg, best_dir);
