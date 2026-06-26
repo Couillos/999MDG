@@ -278,6 +278,11 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
                 if (hrs > max_h) max_h = hrs;
             }
         }
+        if (in_pos) {
+            double const hrs = static_cast<double>(equity_curve.back().timestamp - equity_curve[pos_start].timestamp) / 3600000.0;
+            dur.push_back(hrs); sum_h += hrs; ++cnt;
+            if (hrs > max_h) max_h = hrs;
+        }
         m.position_held_hours_max = max_h;
         if (cnt > 0) { m.position_held_hours_mean = sum_h / static_cast<double>(cnt); m.position_held_hours_median = median(dur); }
     }
@@ -295,6 +300,10 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
                 double const hrs = static_cast<double>(equity_curve[i].timestamp - equity_curve[gap_start].timestamp) / 3600000.0;
                 if (hrs > max_gap) max_gap = hrs;
             }
+        }
+        if (in_gap) {
+            double const hrs = static_cast<double>(equity_curve.back().timestamp - equity_curve[gap_start].timestamp) / 3600000.0;
+            if (hrs > max_gap) max_gap = hrs;
         }
         m.position_unchanged_hours_max = max_gap;
     }
