@@ -6,6 +6,7 @@
 #include "optimizer/optimizer.h"
 #include "plot/plotter.h"
 #include "strategy/strategy.h"
+#include "ui/tui.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -21,21 +22,16 @@
 
 using namespace martingale;
 
-/// Prints usage information and exits.
 [[noreturn]] static void usage(char const* prog) {
-    std::fprintf(stderr, "Usage: %s <backtest|optimize> <config.json>\n", prog);
+    std::fprintf(stderr, "Usage: %s <backtest|optimize> <config.json> [--backtest-best]\n", prog);
     std::exit(1);
 }
 
-/// Converts mode enum to string representation.
 static char const* mode_str(Mode m) {
-    if (m == Mode::BACKTEST) {
-        return "backtest";
-    }
+    if (m == Mode::BACKTEST) return "backtest";
     return "optimize";
 }
 
-/// Creates a UTC-timestamped results directory.
 static std::string create_results_dir(const std::string& base) {
     auto const now = std::chrono::system_clock::now();
     std::time_t const t = std::chrono::system_clock::to_time_t(now);
@@ -53,7 +49,6 @@ static std::string create_results_dir(const std::string& base) {
     return std::string(buf);
 }
 
-/// Writes analysis.json with all metrics and backtest metadata.
 static void write_analysis_json(const std::string& path, const Metrics& m,
                                 const Config& cfg,
                                 const std::vector<EquityPoint>& curve) {
@@ -142,9 +137,6 @@ static void write_analysis_json(const std::string& path, const Metrics& m,
     std::fclose(f);
 }
 
-
-
-/// Splits concatenated candles into per-symbol vectors.
 static std::vector<LoadedCandles> split_candles(const LoadedCandles& loaded,
                                                   size_t n_sym) {
     size_t const total = loaded.candles.size();
@@ -161,7 +153,6 @@ static std::vector<LoadedCandles> split_candles(const LoadedCandles& loaded,
     return result;
 }
 
-/// Full backtest runner.
 static void run_backtest(Config const& cfg) {
     std::string const res_dir = create_results_dir(cfg.output.dir);
     std::printf("Results dir: %s\n", res_dir.c_str());
@@ -207,47 +198,47 @@ static void run_backtest(Config const& cfg) {
     }
 }
 
-/// Writes optimization results as a JSON array to results.json.
-static void write_optimization_json(const std::string& path,
-                                    const std::vector<RunResult>& results) {
-    FILE* f = std::fopen(path.c_str(), "w");
-    if (!f) {
-        std::fprintf(stderr, "Cannot write %s\n", path.c_str());
-        return;
+/// Runs a full backtest with the given config and returns its results + metrics.
+static void backtest_and_report(Config cfg, const std::string& res_dir) {
+    std::printf("Loading symbol info...\n");
+    std::vector<SymbolInfo> const symbols_info = fetch_symbol_info(
+        std::string("data/cache"));
+    std::printf("  Loaded %zu symbols\n", symbols_info.size());
+
+    std::printf("Loading candles...\n");
+    LoadedCandles const loaded = load_candles(cfg);
+    size_t const n_sym = cfg.symbols.size();
+    std::vector<LoadedCandles> const per_symbol = split_candles(loaded, n_sym);
+
+    std::printf("Running backtest...\n");
+    BacktestResult const result = run_backtest(cfg, per_symbol, symbols_info, res_dir);
+    std::printf("  Equity curve points: %zu\n", result.equity_curve.size());
+
+    std::printf("Computing metrics...\n");
+    Metrics const metrics = compute_metrics(result.equity_curve, cfg);
+
+    std::string const json_path = res_dir + "/analysis.json";
+    write_analysis_json(json_path, metrics, cfg, result.equity_curve);
+    std::printf("  Wrote %s\n", json_path.c_str());
+
+    std::printf("Generating charts...\n");
+    Plotter plotter(cfg, result.equity_curve, res_dir);
+    plotter.generate_all();
+
+    if (!result.equity_curve.empty()) {
+        auto const& first = result.equity_curve.front();
+        auto const& last = result.equity_curve.back();
+        std::printf("\nBacktest complete:\n");
+        std::printf("  Initial equity: %.2f\n", first.equity);
+        std::printf("  Final equity:   %.2f\n", last.equity);
+        std::printf("  Return:         %+.4f%%\n",
+                    (last.equity - first.equity) / first.equity * 100.0);
+        std::printf("  Sharpe:         %.4f\n", metrics.sharpe_ratio_usd);
+        std::printf("  Calmar:         %.4f\n", metrics.calmar_ratio_usd);
     }
-    std::fprintf(f, "[\n");
-    for (size_t i = 0; i < results.size(); ++i) {
-        auto const& r = results[i];
-        std::fprintf(f, "  {\n");
-        std::fprintf(f, "    \"params\": {");
-        bool first = true;
-        for (const auto& [k, v] : r.params) {
-            if (!first) std::fprintf(f, ",");
-            first = false;
-            std::fprintf(f, "\"%s\": %.10f", k.c_str(), v);
-        }
-        std::fprintf(f, "},\n");
-        std::fprintf(f, "    \"score\": %.10f,\n", r.score);
-        std::fprintf(f, "    \"valid\": %s,\n", r.valid ? "true" : "false");
-        std::fprintf(f, "    \"metrics\": {\n");
-        std::fprintf(f, "      \"adg_usd\": %.10f,\n", r.metrics.adg_usd);
-        std::fprintf(f, "      \"sharpe_ratio_usd\": %.10f,\n", r.metrics.sharpe_ratio_usd);
-        std::fprintf(f, "      \"calmar_ratio_usd\": %.10f,\n", r.metrics.calmar_ratio_usd);
-        std::fprintf(f, "      \"mdg_usd\": %.10f,\n", r.metrics.mdg_usd);
-        std::fprintf(f, "      \"sortino_ratio_usd\": %.10f\n", r.metrics.sortino_ratio_usd);
-        std::fprintf(f, "    }\n");
-        std::fprintf(f, "  }");
-        if (i + 1 < results.size()) {
-            std::fprintf(f, ",");
-        }
-        std::fprintf(f, "\n");
-    }
-    std::fprintf(f, "]\n");
-    std::fclose(f);
 }
 
-/// Full optimize runner.
-static void run_optimize(Config const& cfg) {
+static void run_optimize(Config const& cfg, bool backtest_best) {
     std::string const base = cfg.output.dir + "/optimize";
     std::string const res_dir = create_results_dir(base);
     std::printf("Results dir: %s\n", res_dir.c_str());
@@ -257,7 +248,6 @@ static void run_optimize(Config const& cfg) {
         std::string("data/cache"));
     std::printf("  Loaded %zu symbols\n", symbols_info.size());
 
-    // Compute max warmup needed across all optimization bounds
     int max_warmup = cfg.warmup_candles;
     for (const auto& [name, bound] : cfg.optimize.bounds) {
         if (name == "entry_ema_period" || name == "parkinson_volatility_span") {
@@ -277,21 +267,98 @@ static void run_optimize(Config const& cfg) {
                 loaded.trading_start_idx);
 
     std::printf("Running optimization...\n");
-    std::vector<RunResult> const results = run_optimization(
-        cfg, per_symbol, symbols_info);
 
-    std::string const json_path = res_dir + "/results.json";
-    write_optimization_json(json_path, results);
-    std::printf("  Wrote %s (%zu results)\n", json_path.c_str(), results.size());
+    // Create TUI for live display
+    OptimizerTUI tui(cfg.optimize.scoring, cfg.optimize.limits,
+                     max_warmup > 0 ? 100 : 0);
+
+    auto tui_callback = [&](const RunResult& rr, size_t /*current*/, size_t /*total*/) {
+        tui.push_result(rr);
+        if (tui.should_abort()) {
+            std::printf("\n  Optimization aborted by user.\n");
+        }
+    };
+
+    std::string results_path = res_dir + "/results";
+    std::vector<RunResult> const results = run_optimization(
+        cfg, per_symbol, symbols_info, results_path, tui_callback);
+
+    tui.finish();
+
+    if (results.empty()) {
+        std::printf("  No valid results.\n");
+        return;
+    }
+
+    // Log top 5 to stdout
+    std::printf("  Top 5 results:\n");
+    for (size_t i = 0; i < std::min(size_t{5}, results.size()); ++i) {
+        auto const& r = results[i];
+        std::printf("    #%zu: score=%.4f valid=%d\n", i + 1, r.score, r.valid);
+        for (const auto& [k, v] : r.params) {
+            std::printf("      %s = %.4f\n", k.c_str(), v);
+        }
+    }
+
+    // Backtest the best candidate if requested
+    if (backtest_best && !results.empty() && results[0].valid) {
+        std::printf("\nBacktesting best candidate...\n");
+        Config best_cfg = cfg;
+        for (const auto& [k, v] : results[0].params) {
+            if (k == "entry_ema_period")
+                best_cfg.strategy.entry_ema_period = static_cast<int>(v);
+            else if (k == "entry_ema_distance_pct")
+                best_cfg.strategy.entry_ema_distance_pct = v;
+            else if (k == "entry_grid_spacing_pct")
+                best_cfg.strategy.entry_grid_spacing_pct = v;
+            else if (k == "initial_qty_pct")
+                best_cfg.strategy.initial_qty_pct = v;
+            else if (k == "double_down_factor")
+                best_cfg.strategy.double_down_factor = v;
+            else if (k == "close_grid_spacing_pct")
+                best_cfg.strategy.close_grid_spacing_pct = v;
+            else if (k == "close_grid_count")
+                best_cfg.strategy.close_grid_count = static_cast<int>(v);
+            else if (k == "sl_upnl_pct")
+                best_cfg.strategy.sl_upnl_pct = v;
+            else if (k == "n_positions")
+                best_cfg.strategy.n_positions = static_cast<int>(v);
+            else if (k == "parkinson_volatility_span")
+                best_cfg.strategy.parkinson_volatility_span = static_cast<int>(v);
+            else if (k == "maker_fee_pct")
+                best_cfg.strategy.maker_fee_pct = v;
+            else if (k == "total_wallet_exposure")
+                best_cfg.total_wallet_exposure = v;
+        }
+        int const a = best_cfg.strategy.entry_ema_period;
+        int const b = best_cfg.strategy.parkinson_volatility_span;
+        best_cfg.warmup_candles = (a > b) ? a : b;
+
+        std::string best_dir = res_dir + "/best";
+        std::error_code ec;
+        std::filesystem::create_directories(best_dir, ec);
+        backtest_and_report(best_cfg, best_dir);
+    }
 }
 
 int main(int argc, char** argv) {
-    if (argc != 3) {
+    if (argc < 3) {
         usage(argv[0]);
     }
 
     std::string_view const mode_arg(argv[1]);
     std::string const config_path(argv[2]);
+    bool backtest_best = false;
+
+    // Parse optional flags
+    for (int i = 3; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--backtest-best") == 0) {
+            backtest_best = true;
+        } else {
+            std::fprintf(stderr, "Unknown argument: %s\n", argv[i]);
+            usage(argv[0]);
+        }
+    }
 
     Mode mode;
     if (mode_arg == "backtest") {
@@ -321,7 +388,7 @@ int main(int argc, char** argv) {
     if (mode == Mode::BACKTEST) {
         run_backtest(cfg);
     } else {
-        run_optimize(cfg);
+        run_optimize(cfg, backtest_best);
     }
 
     return 0;

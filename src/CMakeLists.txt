@@ -13,6 +13,7 @@ set(MARTINGALE_SOURCES
     metrics/calculator.cpp
     utils/thread_pool.cpp
     optimizer/optimizer.cpp
+    ui/tui.cpp
 )
 
 add_library(martingale_lib STATIC
@@ -23,6 +24,7 @@ target_link_libraries(martingale_lib PUBLIC
     simdjson::simdjson
     CURL::libcurl
     zstd::libzstd_static
+    ncurses
 )
 
 target_include_directories(martingale_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

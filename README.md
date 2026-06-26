@@ -7,6 +7,8 @@ C++23 backtest/optimization engine for a martingale grid strategy on Binance fut
 - **Conan** (v2) — install via `pip install conan`
 - **Clang++** (only supported compiler)
 - **CMake** ≥ 3.24
+- **gnuplot** (for PNG charts)
+- **ncurses** (for real-time TUI during optimization)
 
 ## Build
 
@@ -27,22 +29,32 @@ The binary is `build/src/martingale`.
 ## Usage
 
 ```
-./build/src/martingale <backtest|optimize> <config.json>
+./build/src/martingale <backtest|optimize> <config.json> [--backtest-best]
 ```
 
 ### Backtest
 
 ```bash
-./build/src/martingale backtest configs/test_backtest.json
+./build/src/martingale backtest configs/template.json
 ```
 
-### Optimizer (grid search)
+### Optimizer (grid search) with live TUI
 
 ```bash
-./build/src/martingale optimize configs/test_optimize.json
+./build/src/martingale optimize configs/template.json
 ```
 
-See `configs/test_backtest.json` / `configs/test_optimize.json` for example configs. The schema is defined in `configs/schema.json`.
+A real-time ncurses table shows the top 25 candidates during optimization. Press `q` to abort.
+
+### Optimize + backtest the best candidate
+
+```bash
+./build/src/martingale optimize configs/template.json --backtest-best
+```
+
+After optimization, the top-ranked candidate is automatically backtested with full output (charts, CSVs, analysis.json) in a `best/` subfolder.
+
+A single config file (`configs/template.json`) contains both the `strategy` block (for backtest) and the `optimize` block (for grid-search bounds, scoring, and limits). The schema is defined in `configs/schema.json`.
 
 ## Tests
 
@@ -76,7 +88,8 @@ Charts are generated via **gnuplot** with a dark theme. Requires `gnuplot` on th
 
 | File | Contents |
 |---|---|
-| `results.json` | Array of all parameter combinations sorted by score descending, with `params`, `score`, `valid` flag, and key metrics |
+| `results.zst` | All parameter combinations sorted by score descending, zstd-compressed JSON array |
+| `best/` | (only with `--backtest-best`) Full backtest output for the #1 candidate |
 
 ## Data
 

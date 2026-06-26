@@ -8,11 +8,11 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <zstd.h>
 
 namespace martingale {
 namespace {
 
-/// Checks if a parameter name represents an integer-valued parameter.
 bool is_int_param(const std::string& name) {
     return name == "entry_ema_period"
         || name == "close_grid_count"
@@ -20,7 +20,6 @@ bool is_int_param(const std::string& name) {
         || name == "parkinson_volatility_span";
 }
 
-/// Generates candidate values for a single bound range (linear or stepped).
 std::vector<double> axis_values(const std::string& name,
                                 const std::array<double, 2>& bound) {
     double const lo = bound[0];
@@ -39,23 +38,19 @@ std::vector<double> axis_values(const std::string& name,
         }
         return vals;
     }
-    // 5 linearly spaced double values
     std::vector<double> vals;
     vals.reserve(5);
     for (int i = 0; i < 5; ++i) {
-        double const t = static_cast<double>(i) / 4.0;
-        vals.push_back(lo + t * (hi - lo));
+        vals.push_back(lo + (static_cast<double>(i) / 4.0) * (hi - lo));
     }
     return vals;
 }
 
-/// One parameter axis with name and its candidate values.
 struct ParamAxis {
     std::string name;
     std::vector<double> values;
 };
 
-/// Builds parameter axes from all optimization bounds.
 std::vector<ParamAxis> build_axes(
     const std::map<std::string, std::array<double, 2>>& bounds) {
     std::vector<ParamAxis> axes;
@@ -66,17 +61,11 @@ std::vector<ParamAxis> build_axes(
     return axes;
 }
 
-/// Generates Cartesian product of all parameter axes.
 std::vector<std::vector<std::pair<std::string, double>>>
 generate_combinations(const std::vector<ParamAxis>& axes) {
-    if (axes.empty()) {
-        return {{}};
-    }
-    // Pre-compute total number of combinations
+    if (axes.empty()) return {{}};
     size_t total = 1;
-    for (const auto& ax : axes) {
-        total *= ax.values.size();
-    }
+    for (const auto& ax : axes) total *= ax.values.size();
     std::vector<size_t> indices(axes.size(), 0);
     std::vector<std::vector<std::pair<std::string, double>>> combos;
     combos.reserve(total);
@@ -87,22 +76,17 @@ generate_combinations(const std::vector<ParamAxis>& axes) {
             combo.emplace_back(axes[i].name, axes[i].values[indices[i]]);
         }
         combos.push_back(std::move(combo));
-        // Increment multi-base counter
         size_t pos = axes.size();
         while (pos > 0) {
             --pos;
             ++indices[pos];
-            if (indices[pos] < axes[pos].values.size()) {
-                break;
-            }
+            if (indices[pos] < axes[pos].values.size()) break;
             indices[pos] = 0;
         }
     }
     return combos;
 }
 
-/// Applies a parameter combination to a Config by mutating strategy fields.
-/// Also recomputes warmup_candles from the updated entry_ema_period and parkinson_volatility_span.
 void apply_params(Config& cfg,
                   const std::vector<std::pair<std::string, double>>& params) {
     for (const auto& [name, value] : params) {
@@ -132,13 +116,11 @@ void apply_params(Config& cfg,
             cfg.total_wallet_exposure = value;
         }
     }
-    // Recompute warmup candles
     int const a = cfg.strategy.entry_ema_period;
     int const b = cfg.strategy.parkinson_volatility_span;
     cfg.warmup_candles = (a > b) ? a : b;
 }
 
-/// Looks up a metric value by its string name from the Metrics struct.
 double get_metric_value(const Metrics& m, const std::string& name) {
     if (name == "adg_usd") return m.adg_usd;
     if (name == "adg_per_exponential_fit_error_usd") return m.adg_per_exponential_fit_error_usd;
@@ -179,7 +161,6 @@ double get_metric_value(const Metrics& m, const std::string& name) {
     return 0.0;
 }
 
-/// Checks whether a Metrics satisfies all limit constraints.
 bool check_limits(const Metrics& m,
                   const std::map<std::string, Limit>& limits) {
     for (const auto& [name, lim] : limits) {
@@ -190,7 +171,6 @@ bool check_limits(const Metrics& m,
     return true;
 }
 
-/// Computes the weighted score for a Metrics given the scoring configuration.
 double compute_score(const Metrics& m,
                      const std::vector<ScoringMetric>& scoring) {
     double s = 0.0;
@@ -200,28 +180,83 @@ double compute_score(const Metrics& m,
     return s;
 }
 
+/// Writes all results as a zstd-compressed JSON array.
+bool write_compressed_results(const std::string& path,
+                              const std::vector<RunResult>& results) {
+    // First build the full JSON string in memory
+    std::string json;
+    json += "[\n";
+    for (size_t i = 0; i < results.size(); ++i) {
+        auto const& r = results[i];
+        json += "  {\"params\":{";
+        bool first = true;
+        for (const auto& [k, v] : r.params) {
+            if (!first) json += ",";
+            first = false;
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "\"%s\":%.10f", k.c_str(), v);
+            json += buf;
+        }
+        json += "},\"score\":" + std::to_string(r.score);
+        json += ",\"valid\":" + std::string(r.valid ? "true" : "false");
+        json += ",\"metrics\":{";
+        json += "\"adg_usd\":" + std::to_string(r.metrics.adg_usd);
+        json += ",\"sharpe_ratio_usd\":" + std::to_string(r.metrics.sharpe_ratio_usd);
+        json += ",\"sortino_ratio_usd\":" + std::to_string(r.metrics.sortino_ratio_usd);
+        json += ",\"calmar_ratio_usd\":" + std::to_string(r.metrics.calmar_ratio_usd);
+        json += ",\"mdg_usd\":" + std::to_string(r.metrics.mdg_usd);
+        json += ",\"gain_usd\":" + std::to_string(r.metrics.gain_usd);
+        json += ",\"loss_profit_ratio\":" + std::to_string(r.metrics.loss_profit_ratio);
+        json += "}}";
+        if (i + 1 < results.size()) json += ",";
+        json += "\n";
+    }
+    json += "]\n";
+
+    // Compress with zstd
+    size_t const comp_bound = ZSTD_compressBound(json.size());
+    std::vector<char> compressed(comp_bound);
+    size_t const comp_size = ZSTD_compress(compressed.data(), comp_bound,
+                                           json.data(), json.size(), 3);
+    if (ZSTD_isError(comp_size)) {
+        std::fprintf(stderr, "ZSTD compression failed: %s\n",
+                     ZSTD_getErrorName(comp_size));
+        return false;
+    }
+
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) {
+        std::fprintf(stderr, "Cannot write %s\n", path.c_str());
+        return false;
+    }
+    fwrite(compressed.data(), 1, comp_size, f);
+    std::fclose(f);
+    return true;
+}
+
 } // anonymous namespace
 
 std::vector<RunResult> run_optimization(
     const Config& cfg,
     const std::vector<LoadedCandles>& per_symbol_candles,
-    const std::vector<SymbolInfo>& symbols_info)
+    const std::vector<SymbolInfo>& symbols_info,
+    const std::string& results_path,
+    OptimizerCallback callback,
+    size_t top_n)
 {
     auto const axes = build_axes(cfg.optimize.bounds);
     auto const combos = generate_combinations(axes);
     size_t const n_combos = combos.size();
 
     std::printf("  Parameter combinations: %zu\n", n_combos);
+    if (n_combos == 0) return {};
 
-    std::vector<RunResult> results(n_combos);
+    // Store ALL results
+    std::vector<RunResult> all_results;
+    all_results.reserve(n_combos);
 
     std::printf("  Running sequentially...\n");
     for (size_t idx = 0; idx < n_combos; ++idx) {
-        if (idx % 50 == 0) {
-            std::printf("    combo %zu/%zu\n", idx, n_combos);
-            std::fflush(stdout);
-        }
-
         Config local_cfg = cfg;
         apply_params(local_cfg, combos[idx]);
 
@@ -240,24 +275,38 @@ std::vector<RunResult> run_optimization(
         rr.metrics = metrics;
         rr.score = score;
         rr.valid = valid;
-        results[idx] = rr;
+        all_results.push_back(rr);
+
+        // Notify callback (TUI)
+        if (callback) {
+            callback(rr, idx + 1, n_combos);
+        }
     }
 
-    // Sort by score descending
-    std::sort(results.begin(), results.end(),
+    // Write compressed results if path is provided
+    if (!results_path.empty()) {
+        std::string zst_path = results_path + ".zst";
+        if (write_compressed_results(zst_path, all_results)) {
+            std::printf("  Wrote %s (%zu results, zstd compressed)\n",
+                        zst_path.c_str(), all_results.size());
+        }
+    }
+
+    // Sort all by score descending
+    std::sort(all_results.begin(), all_results.end(),
         [](const RunResult& a, const RunResult& b) {
             return a.score > b.score;
         });
 
-    // Return top 100
-    size_t const top = std::min(size_t{100}, results.size());
+    // Return top N
+    size_t const n = std::min(top_n, all_results.size());
     std::vector<RunResult> top_results;
-    top_results.reserve(top);
-    for (size_t i = 0; i < top; ++i) {
-        top_results.push_back(results[i]);
+    top_results.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+        top_results.push_back(all_results[i]);
     }
 
-    std::printf("  Top %zu results\n", top);
+    std::printf("  Top %zu results\n", n);
     return top_results;
 }
 
