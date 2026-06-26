@@ -1,0 +1,38 @@
+{
+  "symbols": ["TESTUSDT"],
+  "timeframe": "1h",
+  "date_from": "2024-01-01",
+  "date_to": "2024-01-04",
+  "initial_balance_usd": 10000.0,
+  "total_wallet_exposure": 2.0,
+  "strategy": {
+    "entry_ema_period": 24,
+    "entry_ema_distance_pct": 0.01,
+    "entry_grid_spacing_pct": 0.02,
+    "initial_qty_pct": 0.05,
+    "double_down_factor": 0.5,
+    "close_grid_spacing_pct": 0.01,
+    "close_grid_count": 2,
+    "sl_upnl_pct": -0.10,
+    "n_positions": 1,
+    "parkinson_volatility_span": 12,
+    "maker_fee_pct": 0.001
+  },
+  "optimize": {
+    "n_workers": 2,
+    "limits": {
+      "gain_usd": { "min": -100.0 }
+    },
+    "scoring": [
+      { "metric": "sharpe_ratio_usd", "weight": 1.0 },
+      { "metric": "sortino_ratio_usd", "weight": 0.5 }
+    ],
+    "bounds": {
+      "entry_ema_period": [12, 48],
+      "initial_qty_pct": [0.02, 0.10]
+    }
+  },
+  "output": {
+    "dir": "results"
+  }
+}
