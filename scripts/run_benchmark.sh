@@ -13,4 +13,4 @@ fi
 
 echo "Running benchmark..."
 # TODO: add Google Benchmark tests
-time "$MARTINGALE" backtest "$PROJECT_DIR/config/benchmark.json" 2>&1
+time "$MARTINGALE" backtest "$PROJECT_DIR/configs/benchmark.json" 2>&1
