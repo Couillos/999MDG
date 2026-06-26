@@ -166,11 +166,30 @@ bool check_limits(const Metrics& m,
     return true;
 }
 
-double compute_score(const Metrics& m,
-                     const std::vector<ScoringMetric>& scoring) {
+/// Tracks per-metric min/max across observed results for min-max normalization.
+struct MetricTracker {
+    double min_val = std::numeric_limits<double>::max();
+    double max_val = std::numeric_limits<double>::lowest();
+
+    void observe(double val) {
+        if (val < min_val) min_val = val;
+        if (val > max_val) max_val = val;
+    }
+
+    double normalize(double val) const {
+        double const range = max_val - min_val;
+        if (range < 1e-15) return 0.5;
+        return (val - min_val) / range;
+    }
+};
+
+double compute_normalized_score(
+    const Metrics& m,
+    const std::vector<ScoringMetric>& scoring,
+    const std::vector<MetricTracker>& trackers) {
     double s = 0.0;
-    for (const auto& sm : scoring) {
-        s += get_metric_value(m, sm.metric) * sm.weight;
+    for (size_t i = 0; i < scoring.size(); ++i) {
+        s += trackers[i].normalize(get_metric_value(m, scoring[i].metric)) * scoring[i].weight;
     }
     return s;
 }
@@ -382,6 +401,9 @@ std::vector<RunResult> run_optimization(
     auto const& limits = cfg.optimize.limits;
     auto const& scoring = cfg.optimize.scoring;
 
+    // Per-metric trackers for min-max normalized scoring
+    std::vector<MetricTracker> trackers(scoring.size());
+
     // Setup combo iteration
     size_t const n_axes = axes.size();
     std::vector<size_t> sizes(n_axes);
@@ -407,7 +429,10 @@ std::vector<RunResult> run_optimization(
         auto const bt = run_backtest(local_cfg, per_symbol_candles, symbols_info, "");
         auto const metrics = compute_metrics(bt.equity_curve, local_cfg);
 
-        double const score = compute_score(metrics, scoring);
+        for (size_t i = 0; i < scoring.size(); ++i) {
+            trackers[i].observe(get_metric_value(metrics, scoring[i].metric));
+        }
+        double const score = compute_normalized_score(metrics, scoring, trackers);
         bool const valid = check_limits(metrics, limits);
 
         RunResult rr;
