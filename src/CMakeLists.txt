@@ -8,6 +8,7 @@ set(MARTINGALE_SOURCES
     strategy/entry_grid.cpp
     strategy/close_grid.cpp
     strategy/stop_loss.cpp
+    strategy/unstuck.cpp
     strategy/parkinson_volatility.cpp
     strategy/strategy.cpp
     metrics/calculator.cpp

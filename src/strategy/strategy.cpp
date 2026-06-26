@@ -3,6 +3,7 @@
 #include "strategy/entry_grid.h"
 #include "strategy/parkinson_volatility.h"
 #include "strategy/stop_loss.h"
+#include "strategy/unstuck.h"
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -162,7 +163,19 @@ BacktestResult run_backtest(const Config& cfg,
             if (is_active[s]) {
                 process_entries(cfg, symbols_info[s], *current_candles[s],
                                 balance, total_positions, positions[s],
-                                true, ema_values[s]);
+                                true, ema_values[s],
+                                static_cast<int64_t>(i));
+            }
+        }
+
+        // Step d: time-based unstuck for all symbols with open positions
+        for (size_t s = 0; s < n; ++s) {
+            if (positions[s].total_qty > 1e-12) {
+                bool const closed = check_time_based_unstuck(cfg, *current_candles[s],
+                                                              positions[s], i);
+                if (closed && positions[s].total_qty < 1e-12 && total_positions > 0) {
+                    total_positions -= 1;
+                }
             }
         }
 

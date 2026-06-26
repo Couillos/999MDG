@@ -81,6 +81,9 @@ StrategyParams parse_strategy(simdjson::ondemand::object strat) {
     sp.n_positions              = static_cast<int>(req_u64(strat, "n_positions"));
     sp.parkinson_volatility_span = static_cast<int>(req_u64(strat, "parkinson_volatility_span"));
     sp.maker_fee_pct            = req_f64(strat, "maker_fee_pct");
+    sp.time_based_unstuck_pct      = opt_f64(strat, "time_based_unstuck_pct", 0.0);
+    sp.time_based_unstuck_threshold = opt_f64(strat, "time_based_unstuck_threshold", 0.0);
+    sp.time_based_unstuck_age       = static_cast<int>(opt_f64(strat, "time_based_unstuck_age", 0.0));
     return sp;
 }
 

@@ -16,7 +16,8 @@ double round_step(double val, double step) {
 void process_entries(const Config& strat, const SymbolInfo& info,
                      const Candle& candle, double total_balance,
                      int& total_positions, Position& pos,
-                     bool is_active, double ema) {
+                     bool is_active, double ema,
+                     int64_t current_tick) {
     // Skip if not active and no existing position
     if (!is_active && std::abs(pos.total_qty) < 1e-12) {
         return;
@@ -47,6 +48,7 @@ void process_entries(const Config& strat, const SymbolInfo& info,
         pos.avg_entry_price = candle.close;
         pos.total_qty = qty;
         pos.entry_levels = 1;
+        pos.entry_tick = current_tick;
         // Apply maker fee: fee = abs(order_value) * maker_fee_pct
         double const entry_fee = std::abs(qty * candle.close) * strat.strategy.maker_fee_pct;
         pos.realized_pnl -= entry_fee;

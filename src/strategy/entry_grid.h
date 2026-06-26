@@ -12,7 +12,8 @@ namespace martingale {
 void process_entries(const Config& strat, const SymbolInfo& info,
                      const Candle& candle, double total_balance,
                      int& total_positions, Position& pos,
-                     bool is_active, double ema);
+                     bool is_active, double ema,
+                     int64_t current_tick);
 
 } // namespace martingale
 

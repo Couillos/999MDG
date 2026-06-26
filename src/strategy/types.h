@@ -14,6 +14,8 @@ struct Position {
     double traded_qty = 0.0;
     double realized_pnl = 0.0;
     int entry_levels = 0;
+    int64_t entry_tick = 0;
+    int unstuck_levels = 0;
 };
 
 /// A single snapshot of the equity curve.
