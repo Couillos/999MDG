@@ -1,13 +1,16 @@
 #include "optimizer.h"
 #include "metrics/calculator.h"
 #include "strategy/strategy.h"
+#include "utils/thread_pool.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <random>
 #include <string>
 #include <vector>
@@ -412,8 +415,9 @@ std::vector<RunResult> run_optimization(
     if (random_sample) {
         std::printf("  Grid too large (%zu), random sampling %zu combos\n", original_total, total);
     }
-    std::printf("  Running sequentially...\n");
 
+    ThreadPool pool(cfg.optimize.n_workers > 0 ? cfg.optimize.n_workers : 1);
+    std::mutex combo_mutex;
     size_t live_counter = 0;
 
     // The combo processing function (called for each set of indices)
@@ -428,6 +432,8 @@ std::vector<RunResult> run_optimization(
 
         auto const bt = run_backtest(local_cfg, per_symbol_candles, symbols_info, "");
         auto const metrics = compute_metrics(bt.equity_curve, local_cfg);
+
+        std::lock_guard<std::mutex> lock(combo_mutex);
 
         for (size_t i = 0; i < scoring.size(); ++i) {
             trackers[i].observe(get_metric_value(metrics, scoring[i].metric));
@@ -462,7 +468,6 @@ std::vector<RunResult> run_optimization(
 
         ++live_counter;
         if (!live_state_path.empty() && (live_counter % 50 == 0 || live_counter == 1)) {
-            // Sort a copy and write live state
             auto sorted_copy = top_results;
             std::sort(sorted_copy.begin(), sorted_copy.end(),
                 [](const RunResult& a, const RunResult& b) { return a.score > b.score; });
@@ -472,33 +477,44 @@ std::vector<RunResult> run_optimization(
     };
 
     if (random_sample) {
-        // Random sampling: pick `total` random linear indices
+        // Pre-generate all random linear indices
         std::mt19937_64 rng(std::random_device{}());
-        std::vector<size_t> indices(n_axes);
+        std::vector<size_t> linear_idx(total);
         for (size_t s = 0; s < total; ++s) {
-            size_t linear = std::uniform_int_distribution<size_t>{0, original_total - 1}(rng);
-            // Convert linear index to cartesian (mixed-radix, last axis is fastest)
-            for (int p = static_cast<int>(n_axes) - 1; p >= 0; --p) {
-                indices[static_cast<size_t>(p)] = linear % sizes[static_cast<size_t>(p)];
-                linear /= sizes[static_cast<size_t>(p)];
-            }
-            process_combo(indices, s);
+            linear_idx[s] = std::uniform_int_distribution<size_t>{0, original_total - 1}(rng);
+        }
+        for (size_t s = 0; s < total; ++s) {
+            pool.submit([s, li = linear_idx[s], &process_combo, &n_axes, &sizes]() {
+                std::vector<size_t> indices(n_axes);
+                size_t linear = li;
+                for (int p = static_cast<int>(n_axes) - 1; p >= 0; --p) {
+                    indices[static_cast<size_t>(p)] = linear % sizes[static_cast<size_t>(p)];
+                    linear /= sizes[static_cast<size_t>(p)];
+                }
+                process_combo(indices, s);
+            });
         }
     } else {
-        // Lazy grid iteration
-        std::vector<size_t> indices(n_axes, 0);
-        for (size_t idx = 0; idx < total; ++idx) {
-            process_combo(indices, idx);
-            // Advance indices (last axis increments fastest)
-            size_t pos = n_axes;
-            while (pos > 0) {
-                --pos;
-                ++indices[pos];
-                if (indices[pos] < sizes[pos]) break;
-                indices[pos] = 0;
-            }
+        // Grid iteration with atomic counter
+        std::atomic<size_t> next_combo(0);
+        int const n_workers = pool.worker_count();
+        for (int w = 0; w < n_workers; ++w) {
+            pool.submit([&, w]() {
+                std::vector<size_t> indices(n_axes);
+                while (true) {
+                    size_t const idx = next_combo.fetch_add(1, std::memory_order_relaxed);
+                    if (idx >= total) break;
+                    size_t linear = idx;
+                    for (int p = static_cast<int>(n_axes) - 1; p >= 0; --p) {
+                        indices[static_cast<size_t>(p)] = linear % sizes[static_cast<size_t>(p)];
+                        linear /= sizes[static_cast<size_t>(p)];
+                    }
+                    process_combo(indices, idx);
+                }
+            });
         }
     }
+    pool.wait();
 
     // Final live state write (ensure done=true is captured)
     if (!live_state_path.empty()) {
