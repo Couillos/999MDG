@@ -16,6 +16,8 @@
 #include <ctime>
 #include <filesystem>
 #include <map>
+#include <memory>
+#include <simdjson.h>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -23,7 +25,13 @@
 using namespace martingale;
 
 [[noreturn]] static void usage(char const* prog) {
-    std::fprintf(stderr, "Usage: %s <backtest|optimize> <config.json> [--backtest-best]\n", prog);
+    std::fprintf(stderr,
+        "Usage:\n"
+        "  %s backtest <config.json>\n"
+        "  %s optimize <config.json> [--tui] [--backtest-best]\n"
+        "  %s --tui <config.json>\n"
+        "  %s --backtest-best <config.json>\n",
+        prog, prog, prog, prog);
     std::exit(1);
 }
 
@@ -100,6 +108,7 @@ static void write_analysis_json(const std::string& path, const Metrics& m,
     std::fprintf(f, "    \"adg_per_exposure_long_usd\": %.10f,\n", m.adg_per_exposure_long_usd);
     std::fprintf(f, "    \"adg_per_exposure_short_usd\": %.10f,\n", m.adg_per_exposure_short_usd);
     std::fprintf(f, "    \"calmar_ratio_usd\": %.10f,\n", m.calmar_ratio_usd);
+    std::fprintf(f, "    \"drawdown_worst\": %.10f,\n", m.drawdown_worst);
     std::fprintf(f, "    \"entry_initial_balance_pct_long\": %.10f,\n", m.entry_initial_balance_pct_long);
     std::fprintf(f, "    \"entry_initial_balance_pct_short\": %.10f,\n", m.entry_initial_balance_pct_short);
     std::fprintf(f, "    \"equity_balance_diff_neg_max_usd\": %.10f,\n", m.equity_balance_diff_neg_max_usd);
@@ -238,9 +247,83 @@ static void backtest_and_report(Config cfg, const std::string& res_dir) {
     }
 }
 
-static void run_optimize(Config const& cfg, bool backtest_best) {
+static void apply_params_to_cfg(Config& cfg, const std::map<std::string, double>& params) {
+    for (const auto& [k, v] : params) {
+        if (k == "entry_ema_period")
+            cfg.strategy.entry_ema_period = static_cast<int>(v);
+        else if (k == "entry_ema_distance_pct")
+            cfg.strategy.entry_ema_distance_pct = v;
+        else if (k == "entry_grid_spacing_pct")
+            cfg.strategy.entry_grid_spacing_pct = v;
+        else if (k == "initial_qty_pct")
+            cfg.strategy.initial_qty_pct = v;
+        else if (k == "double_down_factor")
+            cfg.strategy.double_down_factor = v;
+        else if (k == "close_grid_spacing_pct")
+            cfg.strategy.close_grid_spacing_pct = v;
+        else if (k == "close_grid_count")
+            cfg.strategy.close_grid_count = static_cast<int>(v);
+        else if (k == "sl_upnl_pct")
+            cfg.strategy.sl_upnl_pct = v;
+        else if (k == "n_positions")
+            cfg.strategy.n_positions = static_cast<int>(v);
+        else if (k == "parkinson_volatility_span")
+            cfg.strategy.parkinson_volatility_span = static_cast<int>(v);
+        else if (k == "maker_fee_pct")
+            cfg.strategy.maker_fee_pct = v;
+        else if (k == "total_wallet_exposure")
+            cfg.total_wallet_exposure = v;
+    }
+    int const a = cfg.strategy.entry_ema_period;
+    int const b = cfg.strategy.parkinson_volatility_span;
+    cfg.warmup_candles = (a > b) ? a : b;
+}
+
+/// Read the live state JSON and return the best RunResult (top of top array).
+/// Returns false if file cannot be read or parsed.
+static bool read_live_state_best(const std::string& path,
+                                 std::map<std::string, double>& out_params) {
+    simdjson::padded_string json_data;
+    if (simdjson::padded_string::load(path).get(json_data)) return false;
+
+    simdjson::ondemand::parser parser;
+    simdjson::ondemand::document doc;
+    if (parser.iterate(json_data).get(doc)) return false;
+
+    simdjson::ondemand::object root;
+    if (doc.get_object().get(root)) return false;
+
+    simdjson::ondemand::array top_arr;
+    if (root["top"].get_array().get(top_arr)) return false;
+
+    for (auto elem : top_arr) {
+        simdjson::ondemand::object ro;
+        if (elem.get_object().get(ro)) continue;
+
+        bool valid = false;
+        bool v;
+        if (!ro["valid"].get_bool().get(v)) valid = v;
+        if (!valid) continue;
+
+        simdjson::ondemand::object params_obj;
+        if (ro["params"].get_object().get(params_obj)) continue;
+
+        for (auto pf : params_obj) {
+            std::string_view pk;
+            if (pf.unescaped_key().get(pk)) continue;
+            double pv;
+            if (!pf.value().get_double().get(pv))
+                out_params[std::string(pk)] = pv;
+        }
+        return true;
+    }
+    return false;
+}
+
+static void run_optimize(Config const& cfg, bool backtest_best, bool show_tui) {
     std::string const base = cfg.output.dir + "/optimize";
     std::string const res_dir = create_results_dir(base);
+    std::string const live_state = cfg.output.dir + "/optimize/.live_state";
     std::printf("Results dir: %s\n", res_dir.c_str());
 
     std::printf("Loading symbol info...\n");
@@ -268,22 +351,38 @@ static void run_optimize(Config const& cfg, bool backtest_best) {
 
     std::printf("Running optimization...\n");
 
-    // Create TUI for live display
-    OptimizerTUI tui(cfg.optimize.scoring, cfg.optimize.limits,
-                     max_warmup > 0 ? 100 : 0);
+    // TUI or stdout progress
+    std::unique_ptr<OptimizerTUI> tui;
+    if (show_tui) {
+        tui = std::make_unique<OptimizerTUI>(
+            cfg.optimize.scoring, cfg.optimize.limits, 0);
+    }
 
-    auto tui_callback = [&](const RunResult& rr, size_t /*current*/, size_t /*total*/) {
-        tui.push_result(rr);
-        if (tui.should_abort()) {
-            std::printf("\n  Optimization aborted by user.\n");
+    auto opt_callback = [&](const RunResult& rr, size_t current, size_t total) {
+        if (tui) {
+            if (!tui->has_total() && total > 0) tui->set_total(total);
+            tui->push_result(rr);
+            if (tui->should_abort()) {
+                std::printf("\n  Optimization aborted by user.\n");
+            }
+        } else if (current % 100 == 1 || current == total) {
+            std::printf("\r  %zu / %zu (%.1f%%) score=%.4f valid=%d    ",
+                        current, total,
+                        100.0 * static_cast<double>(current) / static_cast<double>(total),
+                        rr.score, rr.valid);
+            std::fflush(stdout);
         }
     };
 
     std::string results_path = res_dir + "/results";
     std::vector<RunResult> const results = run_optimization(
-        cfg, per_symbol, symbols_info, results_path, tui_callback);
+        cfg, per_symbol, symbols_info, results_path, opt_callback, 100, live_state);
 
-    tui.finish();
+    if (tui) tui->finish();
+    else std::printf("\n");
+
+    // Clean up live state file
+    std::remove(live_state.c_str());
 
     if (results.empty()) {
         std::printf("  No valid results.\n");
@@ -300,39 +399,11 @@ static void run_optimize(Config const& cfg, bool backtest_best) {
         }
     }
 
-    // Backtest the best candidate if requested
+    // Backtest the best candidate if requested (inline)
     if (backtest_best && !results.empty() && results[0].valid) {
         std::printf("\nBacktesting best candidate...\n");
         Config best_cfg = cfg;
-        for (const auto& [k, v] : results[0].params) {
-            if (k == "entry_ema_period")
-                best_cfg.strategy.entry_ema_period = static_cast<int>(v);
-            else if (k == "entry_ema_distance_pct")
-                best_cfg.strategy.entry_ema_distance_pct = v;
-            else if (k == "entry_grid_spacing_pct")
-                best_cfg.strategy.entry_grid_spacing_pct = v;
-            else if (k == "initial_qty_pct")
-                best_cfg.strategy.initial_qty_pct = v;
-            else if (k == "double_down_factor")
-                best_cfg.strategy.double_down_factor = v;
-            else if (k == "close_grid_spacing_pct")
-                best_cfg.strategy.close_grid_spacing_pct = v;
-            else if (k == "close_grid_count")
-                best_cfg.strategy.close_grid_count = static_cast<int>(v);
-            else if (k == "sl_upnl_pct")
-                best_cfg.strategy.sl_upnl_pct = v;
-            else if (k == "n_positions")
-                best_cfg.strategy.n_positions = static_cast<int>(v);
-            else if (k == "parkinson_volatility_span")
-                best_cfg.strategy.parkinson_volatility_span = static_cast<int>(v);
-            else if (k == "maker_fee_pct")
-                best_cfg.strategy.maker_fee_pct = v;
-            else if (k == "total_wallet_exposure")
-                best_cfg.total_wallet_exposure = v;
-        }
-        int const a = best_cfg.strategy.entry_ema_period;
-        int const b = best_cfg.strategy.parkinson_volatility_span;
-        best_cfg.warmup_candles = (a > b) ? a : b;
+        apply_params_to_cfg(best_cfg, results[0].params);
 
         std::string best_dir = res_dir + "/best";
         std::error_code ec;
@@ -346,14 +417,54 @@ int main(int argc, char** argv) {
         usage(argv[0]);
     }
 
-    std::string_view const mode_arg(argv[1]);
     std::string const config_path(argv[2]);
+
+    // Check for standalone --tui or --backtest-best mode
+    if (std::strcmp(argv[1], "--tui") == 0) {
+        Config const cfg = load_config(config_path, Mode::OPTIMIZE);
+        std::string const live_state = cfg.output.dir + "/optimize/.live_state";
+        std::printf("Watching live state: %s\n", live_state.c_str());
+        run_watch_tui(live_state);
+        return 0;
+    }
+
+    if (std::strcmp(argv[1], "--backtest-best") == 0) {
+        Config cfg = load_config(config_path, Mode::OPTIMIZE);
+        std::string const live_state = cfg.output.dir + "/optimize/.live_state";
+
+        std::map<std::string, double> best_params;
+        if (!read_live_state_best(live_state, best_params)) {
+            std::fprintf(stderr, "No live optimization state found (file: %s)\n",
+                         live_state.c_str());
+            return 1;
+        }
+
+        std::printf("Best params from live optimization:\n");
+        for (const auto& [k, v] : best_params) {
+            std::printf("  %s = %.4f\n", k.c_str(), v);
+        }
+
+        apply_params_to_cfg(cfg, best_params);
+
+        // Run backtest in a subdirectory of the live results dir
+        std::string best_dir = cfg.output.dir + "/optimize/best_from_live";
+        std::error_code ec;
+        std::filesystem::create_directories(best_dir, ec);
+        backtest_and_report(cfg, best_dir);
+        return 0;
+    }
+
+    // Regular modes: backtest or optimize
+    std::string_view const mode_arg(argv[1]);
     bool backtest_best = false;
+    bool show_tui = false;
 
     // Parse optional flags
     for (int i = 3; i < argc; ++i) {
         if (std::strcmp(argv[i], "--backtest-best") == 0) {
             backtest_best = true;
+        } else if (std::strcmp(argv[i], "--tui") == 0) {
+            show_tui = true;
         } else {
             std::fprintf(stderr, "Unknown argument: %s\n", argv[i]);
             usage(argv[0]);
@@ -388,7 +499,7 @@ int main(int argc, char** argv) {
     if (mode == Mode::BACKTEST) {
         run_backtest(cfg);
     } else {
-        run_optimize(cfg, backtest_best);
+        run_optimize(cfg, backtest_best, show_tui);
     }
 
     return 0;

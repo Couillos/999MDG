@@ -5,7 +5,10 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <functional>
 #include <map>
+#include <random>
 #include <string>
 #include <vector>
 #include <zstd.h>
@@ -31,10 +34,16 @@ std::vector<double> axis_values(const std::string& name,
         int const imin = static_cast<int>(std::ceil(lo));
         int const imax = static_cast<int>(std::floor(hi));
         if (imax < imin) return {static_cast<double>(imin)};
+        int const n = imax - imin + 1;
+        int constexpr max_vals = 10;
         std::vector<double> vals;
-        vals.reserve(static_cast<size_t>(imax - imin + 1));
-        for (int v = imin; v <= imax; ++v) {
-            vals.push_back(static_cast<double>(v));
+        if (n <= max_vals) {
+            vals.reserve(static_cast<size_t>(n));
+            for (int v = imin; v <= imax; ++v) vals.push_back(static_cast<double>(v));
+        } else {
+            int const step = static_cast<int>(std::ceil(static_cast<double>(n) / max_vals));
+            vals.reserve(static_cast<size_t>(n / step + 1));
+            for (int v = imin; v <= imax; v += step) vals.push_back(static_cast<double>(v));
         }
         return vals;
     }
@@ -61,64 +70,33 @@ std::vector<ParamAxis> build_axes(
     return axes;
 }
 
-std::vector<std::vector<std::pair<std::string, double>>>
-generate_combinations(const std::vector<ParamAxis>& axes) {
-    if (axes.empty()) return {{}};
-    size_t total = 1;
-    for (const auto& ax : axes) total *= ax.values.size();
-    std::vector<size_t> indices(axes.size(), 0);
-    std::vector<std::vector<std::pair<std::string, double>>> combos;
-    combos.reserve(total);
-    for (size_t c = 0; c < total; ++c) {
-        std::vector<std::pair<std::string, double>> combo;
-        combo.reserve(axes.size());
-        for (size_t i = 0; i < axes.size(); ++i) {
-            combo.emplace_back(axes[i].name, axes[i].values[indices[i]]);
-        }
-        combos.push_back(std::move(combo));
-        size_t pos = axes.size();
-        while (pos > 0) {
-            --pos;
-            ++indices[pos];
-            if (indices[pos] < axes[pos].values.size()) break;
-            indices[pos] = 0;
-        }
+void apply_params(Config& cfg, const ParamAxis& axis, double value) {
+    auto const& name = axis.name;
+    if (name == "entry_ema_period") {
+        cfg.strategy.entry_ema_period = static_cast<int>(value);
+    } else if (name == "entry_ema_distance_pct") {
+        cfg.strategy.entry_ema_distance_pct = value;
+    } else if (name == "entry_grid_spacing_pct") {
+        cfg.strategy.entry_grid_spacing_pct = value;
+    } else if (name == "initial_qty_pct") {
+        cfg.strategy.initial_qty_pct = value;
+    } else if (name == "double_down_factor") {
+        cfg.strategy.double_down_factor = value;
+    } else if (name == "close_grid_spacing_pct") {
+        cfg.strategy.close_grid_spacing_pct = value;
+    } else if (name == "close_grid_count") {
+        cfg.strategy.close_grid_count = static_cast<int>(value);
+    } else if (name == "sl_upnl_pct") {
+        cfg.strategy.sl_upnl_pct = value;
+    } else if (name == "n_positions") {
+        cfg.strategy.n_positions = static_cast<int>(value);
+    } else if (name == "parkinson_volatility_span") {
+        cfg.strategy.parkinson_volatility_span = static_cast<int>(value);
+    } else if (name == "maker_fee_pct") {
+        cfg.strategy.maker_fee_pct = value;
+    } else if (name == "total_wallet_exposure") {
+        cfg.total_wallet_exposure = value;
     }
-    return combos;
-}
-
-void apply_params(Config& cfg,
-                  const std::vector<std::pair<std::string, double>>& params) {
-    for (const auto& [name, value] : params) {
-        if (name == "entry_ema_period") {
-            cfg.strategy.entry_ema_period = static_cast<int>(value);
-        } else if (name == "entry_ema_distance_pct") {
-            cfg.strategy.entry_ema_distance_pct = value;
-        } else if (name == "entry_grid_spacing_pct") {
-            cfg.strategy.entry_grid_spacing_pct = value;
-        } else if (name == "initial_qty_pct") {
-            cfg.strategy.initial_qty_pct = value;
-        } else if (name == "double_down_factor") {
-            cfg.strategy.double_down_factor = value;
-        } else if (name == "close_grid_spacing_pct") {
-            cfg.strategy.close_grid_spacing_pct = value;
-        } else if (name == "close_grid_count") {
-            cfg.strategy.close_grid_count = static_cast<int>(value);
-        } else if (name == "sl_upnl_pct") {
-            cfg.strategy.sl_upnl_pct = value;
-        } else if (name == "n_positions") {
-            cfg.strategy.n_positions = static_cast<int>(value);
-        } else if (name == "parkinson_volatility_span") {
-            cfg.strategy.parkinson_volatility_span = static_cast<int>(value);
-        } else if (name == "maker_fee_pct") {
-            cfg.strategy.maker_fee_pct = value;
-        } else if (name == "total_wallet_exposure") {
-            cfg.total_wallet_exposure = value;
-        }
-    }
-    int const a = cfg.strategy.entry_ema_period;
-    int const b = cfg.strategy.parkinson_volatility_span;
-    cfg.warmup_candles = (a > b) ? a : b;
 }
 
 double get_metric_value(const Metrics& m, const std::string& name) {
@@ -127,6 +105,7 @@ double get_metric_value(const Metrics& m, const std::string& name) {
     if (name == "adg_per_exposure_long_usd") return m.adg_per_exposure_long_usd;
     if (name == "adg_per_exposure_short_usd") return m.adg_per_exposure_short_usd;
     if (name == "calmar_ratio_usd") return m.calmar_ratio_usd;
+    if (name == "drawdown_worst") return m.drawdown_worst;
     if (name == "entry_initial_balance_pct_long") return m.entry_initial_balance_pct_long;
     if (name == "entry_initial_balance_pct_short") return m.entry_initial_balance_pct_short;
     if (name == "equity_balance_diff_neg_max_usd") return m.equity_balance_diff_neg_max_usd;
@@ -180,58 +159,161 @@ double compute_score(const Metrics& m,
     return s;
 }
 
-/// Writes all results as a zstd-compressed JSON array.
-bool write_compressed_results(const std::string& path,
-                              const std::vector<RunResult>& results) {
-    // First build the full JSON string in memory
-    std::string json;
-    json += "[\n";
-    for (size_t i = 0; i < results.size(); ++i) {
-        auto const& r = results[i];
-        json += "  {\"params\":{";
-        bool first = true;
-        for (const auto& [k, v] : r.params) {
-            if (!first) json += ",";
-            first = false;
-            char buf[64];
-            std::snprintf(buf, sizeof(buf), "\"%s\":%.10f", k.c_str(), v);
-            json += buf;
-        }
-        json += "},\"score\":" + std::to_string(r.score);
-        json += ",\"valid\":" + std::string(r.valid ? "true" : "false");
-        json += ",\"metrics\":{";
-        json += "\"adg_usd\":" + std::to_string(r.metrics.adg_usd);
-        json += ",\"sharpe_ratio_usd\":" + std::to_string(r.metrics.sharpe_ratio_usd);
-        json += ",\"sortino_ratio_usd\":" + std::to_string(r.metrics.sortino_ratio_usd);
-        json += ",\"calmar_ratio_usd\":" + std::to_string(r.metrics.calmar_ratio_usd);
-        json += ",\"mdg_usd\":" + std::to_string(r.metrics.mdg_usd);
-        json += ",\"gain_usd\":" + std::to_string(r.metrics.gain_usd);
-        json += ",\"loss_profit_ratio\":" + std::to_string(r.metrics.loss_profit_ratio);
-        json += "}}";
-        if (i + 1 < results.size()) json += ",";
-        json += "\n";
+void write_result_json(FILE* f, const std::vector<ParamAxis>& axes,
+                       const std::vector<size_t>& indices,
+                       const Metrics& m, double score, bool valid) {
+    std::fprintf(f, "{\"params\":{");
+    bool first = true;
+    for (size_t i = 0; i < axes.size(); ++i) {
+        if (!first) std::fputc(',', f);
+        first = false;
+        std::fprintf(f, "\"%s\":%.10f", axes[i].name.c_str(), axes[i].values[indices[i]]);
     }
-    json += "]\n";
+    std::fprintf(f, "},\"score\":%.10f,\"valid\":%s"
+                    ",\"metrics\":{"
+                    "\"adg_usd\":%.10f"
+                    ",\"sharpe_ratio_usd\":%.10f"
+                    ",\"sortino_ratio_usd\":%.10f"
+                    ",\"calmar_ratio_usd\":%.10f"
+                    ",\"drawdown_worst\":%.10f"
+                    ",\"mdg_usd\":%.10f"
+                    ",\"gain_usd\":%.10f"
+                    ",\"loss_profit_ratio\":%.10f"
+                    "}}\n",
+                    score, valid ? "true" : "false",
+                    m.adg_usd,
+                    m.sharpe_ratio_usd,
+                    m.sortino_ratio_usd,
+                    m.calmar_ratio_usd,
+                    m.drawdown_worst,
+                    m.mdg_usd,
+                    m.gain_usd,
+                    m.loss_profit_ratio);
+}
+
+void compress_and_cleanup(const std::string& tmp_path,
+                          const std::string& zst_path) {
+    // Read entire tmp file
+    FILE* f = std::fopen(tmp_path.c_str(), "rb");
+    if (!f) return;
+    std::fseek(f, 0, SEEK_END);
+    long const fsize = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    if (fsize <= 0) {
+        std::fclose(f);
+        std::remove(tmp_path.c_str());
+        return;
+    }
+    std::string content(static_cast<size_t>(fsize), '\0');
+    if (std::fread(content.data(), 1, static_cast<size_t>(fsize), f) != static_cast<size_t>(fsize)) {
+        std::fclose(f);
+        std::remove(tmp_path.c_str());
+        return;
+    }
+    std::fclose(f);
+    std::remove(tmp_path.c_str());
+
+    // Wrap lines into JSON array "[ ... ]"
+    std::string json = "[\n" + content + "]\n";
 
     // Compress with zstd
-    size_t const comp_bound = ZSTD_compressBound(json.size());
-    std::vector<char> compressed(comp_bound);
-    size_t const comp_size = ZSTD_compress(compressed.data(), comp_bound,
-                                           json.data(), json.size(), 3);
-    if (ZSTD_isError(comp_size)) {
-        std::fprintf(stderr, "ZSTD compression failed: %s\n",
-                     ZSTD_getErrorName(comp_size));
-        return false;
+    size_t const bound = ZSTD_compressBound(json.size());
+    std::vector<char> compressed(bound);
+    size_t const csize = ZSTD_compress(compressed.data(), bound,
+                                       json.data(), json.size(), 3);
+    if (ZSTD_isError(csize)) {
+        std::fprintf(stderr, "ZSTD compress failed: %s\n",
+                     ZSTD_getErrorName(csize));
+        return;
     }
 
-    FILE* f = std::fopen(path.c_str(), "wb");
+    f = std::fopen(zst_path.c_str(), "wb");
     if (!f) {
-        std::fprintf(stderr, "Cannot write %s\n", path.c_str());
-        return false;
+        std::fprintf(stderr, "Cannot write %s\n", zst_path.c_str());
+        return;
     }
-    fwrite(compressed.data(), 1, comp_size, f);
+    std::fwrite(compressed.data(), 1, csize, f);
     std::fclose(f);
-    return true;
+
+    std::printf("  Wrote %s (%zu results, zstd compressed)\n",
+                zst_path.c_str(), content.size() > 0
+                    ? static_cast<size_t>(std::count(content.begin(), content.end(), '\n'))
+                    : 0);
+}
+
+void write_live_state(const std::string& path,
+                       size_t completed, size_t total,
+                       const std::vector<RunResult>& top_results,
+                       const std::vector<ScoringMetric>& scoring,
+                       const std::map<std::string, Limit>& limits)
+{
+    std::string tmp_path = path + ".tmp";
+    FILE* f = std::fopen(tmp_path.c_str(), "w");
+    if (!f) return;
+
+    std::fprintf(f, "{\"completed\":%zu,\"total\":%zu,", completed, total);
+
+    // scoring
+    std::fprintf(f, "\"scoring\":[");
+    bool first = true;
+    for (const auto& sm : scoring) {
+        if (!first) std::fputc(',', f);
+        first = false;
+        std::fprintf(f, "{\"metric\":\"%s\",\"weight\":%.10f}", sm.metric.c_str(), sm.weight);
+    }
+    std::fprintf(f, "],");
+
+    // limits
+    std::fprintf(f, "\"limits\":{");
+    first = true;
+    for (const auto& [name, lim] : limits) {
+        if (!first) std::fputc(',', f);
+        first = false;
+        std::fprintf(f, "\"%s\":{", name.c_str());
+        if (lim.has_min) std::fprintf(f, "\"min\":%.10f", lim.min);
+        if (lim.has_min && lim.has_max) std::fputc(',', f);
+        if (lim.has_max) std::fprintf(f, "\"max\":%.10f", lim.max);
+        std::fprintf(f, "}");
+    }
+    std::fprintf(f, "},");
+
+    // top results
+    std::fprintf(f, "\"top\":[");
+    size_t const n = std::min(size_t{25}, top_results.size());
+    for (size_t i = 0; i < n; ++i) {
+        if (i > 0) std::fputc(',', f);
+        const auto& r = top_results[i];
+        std::fprintf(f, "{\"score\":%.10f,\"valid\":%s,\"params\":{",
+                     r.score, r.valid ? "true" : "false");
+        bool fp = true;
+        for (const auto& [k, v] : r.params) {
+            if (!fp) std::fputc(',', f);
+            fp = false;
+            std::fprintf(f, "\"%s\":%.10f", k.c_str(), v);
+        }
+        std::fprintf(f, "},\"metrics\":{"
+                        "\"adg_usd\":%.10f"
+                        ",\"sharpe_ratio_usd\":%.10f"
+                        ",\"sortino_ratio_usd\":%.10f"
+                        ",\"calmar_ratio_usd\":%.10f"
+                        ",\"drawdown_worst\":%.10f"
+                        ",\"mdg_usd\":%.10f"
+                        ",\"gain_usd\":%.10f"
+                        ",\"loss_profit_ratio\":%.10f"
+                        "}}",
+                     r.metrics.adg_usd,
+                     r.metrics.sharpe_ratio_usd,
+                     r.metrics.sortino_ratio_usd,
+                     r.metrics.calmar_ratio_usd,
+                     r.metrics.drawdown_worst,
+                     r.metrics.mdg_usd,
+                     r.metrics.gain_usd,
+                     r.metrics.loss_profit_ratio);
+    }
+    std::fprintf(f, "]}\n");
+    std::fclose(f);
+
+    std::rename(tmp_path.c_str(), path.c_str());
 }
 
 } // anonymous namespace
@@ -242,71 +324,156 @@ std::vector<RunResult> run_optimization(
     const std::vector<SymbolInfo>& symbols_info,
     const std::string& results_path,
     OptimizerCallback callback,
-    size_t top_n)
+    size_t top_n,
+    const std::string& live_state_path)
 {
     auto const axes = build_axes(cfg.optimize.bounds);
-    auto const combos = generate_combinations(axes);
-    size_t const n_combos = combos.size();
 
-    std::printf("  Parameter combinations: %zu\n", n_combos);
-    if (n_combos == 0) return {};
+    // Compute total combos without creating them all
+    size_t total = 1;
+    for (const auto& ax : axes) total *= ax.values.size();
 
-    // Store ALL results
-    std::vector<RunResult> all_results;
-    all_results.reserve(n_combos);
+    std::printf("  Parameter combinations: %zu\n", total);
+    if (total == 0) return {};
 
+    // Cap to max_iterations if set
+    size_t const max_iter = cfg.optimize.max_iterations;
+    if (max_iter > 0 && total > max_iter) {
+        std::printf("  Capped to %zu iterations (max_iterations)\n", max_iter);
+        total = max_iter;
+    }
+
+    // Min-heap: smallest score at front (pop weakest when full)
+    auto cmp = [](const RunResult& a, const RunResult& b) {
+        return a.score > b.score;
+    };
+    std::vector<RunResult> top_results;
+    top_results.reserve(top_n + 1);
+
+    // Temp file for incremental JSON output
+    std::string tmp_path;
+    FILE* tmp_file = nullptr;
+    if (!results_path.empty()) {
+        tmp_path = results_path + ".tmp";
+        tmp_file = std::fopen(tmp_path.c_str(), "w");
+    }
+
+    auto const& limits = cfg.optimize.limits;
+    auto const& scoring = cfg.optimize.scoring;
+
+    // Setup combo iteration
+    size_t const n_axes = axes.size();
+    std::vector<size_t> sizes(n_axes);
+    for (size_t i = 0; i < n_axes; ++i) sizes[i] = axes[i].values.size();
+
+    constexpr size_t MAX_COMBOS = 100000;
+    bool const random_sample = total > MAX_COMBOS;
+
+    if (random_sample) {
+        std::printf("  Grid too large (%zu), random sampling %zu combos\n", total, MAX_COMBOS);
+    }
     std::printf("  Running sequentially...\n");
-    for (size_t idx = 0; idx < n_combos; ++idx) {
+
+    size_t live_counter = 0;
+
+    // The combo processing function (called for each set of indices)
+    auto process_combo = [&](const std::vector<size_t>& indices, size_t seq_idx) {
         Config local_cfg = cfg;
-        apply_params(local_cfg, combos[idx]);
+        for (size_t i = 0; i < n_axes; ++i) {
+            apply_params(local_cfg, axes[i], axes[i].values[indices[i]]);
+        }
+        int const a = local_cfg.strategy.entry_ema_period;
+        int const b = local_cfg.strategy.parkinson_volatility_span;
+        local_cfg.warmup_candles = (a > b) ? a : b;
 
         auto const bt = run_backtest(local_cfg, per_symbol_candles, symbols_info, "");
         auto const metrics = compute_metrics(bt.equity_curve, local_cfg);
 
-        bool const valid = check_limits(metrics, cfg.optimize.limits);
-        double const score = valid
-            ? compute_score(metrics, cfg.optimize.scoring)
-            : 0.0;
+        bool const valid = check_limits(metrics, limits);
+        double const score = valid ? compute_score(metrics, scoring) : 0.0;
 
         RunResult rr;
-        for (const auto& [name, val] : combos[idx]) {
-            rr.params[name] = val;
+        for (size_t i = 0; i < n_axes; ++i) {
+            rr.params[axes[i].name] = axes[i].values[indices[i]];
         }
         rr.metrics = metrics;
         rr.score = score;
         rr.valid = valid;
-        all_results.push_back(rr);
 
-        // Notify callback (TUI)
+        if (top_results.size() < top_n) {
+            top_results.push_back(rr);
+            std::push_heap(top_results.begin(), top_results.end(), cmp);
+        } else if (rr.score > top_results.front().score) {
+            std::pop_heap(top_results.begin(), top_results.end(), cmp);
+            top_results.back() = rr;
+            std::push_heap(top_results.begin(), top_results.end(), cmp);
+        }
+
+        if (tmp_file) {
+            write_result_json(tmp_file, axes, indices, metrics, score, valid);
+        }
+
         if (callback) {
-            callback(rr, idx + 1, n_combos);
+            callback(rr, seq_idx + 1, random_sample ? MAX_COMBOS : total);
+        }
+
+        ++live_counter;
+        if (!live_state_path.empty() && (live_counter % 50 == 0 || live_counter == 1)) {
+            // Sort a copy and write live state
+            auto sorted_copy = top_results;
+            std::sort(sorted_copy.begin(), sorted_copy.end(),
+                [](const RunResult& a, const RunResult& b) { return a.score > b.score; });
+            write_live_state(live_state_path, live_counter,
+                             random_sample ? MAX_COMBOS : total,
+                             sorted_copy, scoring, limits);
+        }
+    };
+
+    if (random_sample) {
+        // Random sampling: pick MAX_COMBOS random linear indices
+        std::mt19937_64 rng(std::random_device{}());
+        std::vector<size_t> indices(n_axes);
+        for (size_t s = 0; s < MAX_COMBOS; ++s) {
+            size_t linear = std::uniform_int_distribution<size_t>{0, total - 1}(rng);
+            // Convert linear index to cartesian (mixed-radix, last axis is fastest)
+            for (int p = static_cast<int>(n_axes) - 1; p >= 0; --p) {
+                indices[static_cast<size_t>(p)] = linear % sizes[static_cast<size_t>(p)];
+                linear /= sizes[static_cast<size_t>(p)];
+            }
+            process_combo(indices, s);
+        }
+    } else {
+        // Lazy grid iteration
+        std::vector<size_t> indices(n_axes, 0);
+        for (size_t idx = 0; idx < total; ++idx) {
+            process_combo(indices, idx);
+            // Advance indices (last axis increments fastest)
+            size_t pos = n_axes;
+            while (pos > 0) {
+                --pos;
+                ++indices[pos];
+                if (indices[pos] < sizes[pos]) break;
+                indices[pos] = 0;
+            }
         }
     }
 
-    // Write compressed results if path is provided
+    if (tmp_file) {
+        std::fclose(tmp_file);
+    }
+
+    // Compress temp file to zst
     if (!results_path.empty()) {
-        std::string zst_path = results_path + ".zst";
-        if (write_compressed_results(zst_path, all_results)) {
-            std::printf("  Wrote %s (%zu results, zstd compressed)\n",
-                        zst_path.c_str(), all_results.size());
-        }
+        compress_and_cleanup(tmp_path, results_path + ".zst");
     }
 
-    // Sort all by score descending
-    std::sort(all_results.begin(), all_results.end(),
+    // Sort top results descending by score
+    std::sort(top_results.begin(), top_results.end(),
         [](const RunResult& a, const RunResult& b) {
             return a.score > b.score;
         });
 
-    // Return top N
-    size_t const n = std::min(top_n, all_results.size());
-    std::vector<RunResult> top_results;
-    top_results.reserve(n);
-    for (size_t i = 0; i < n; ++i) {
-        top_results.push_back(all_results[i]);
-    }
-
-    std::printf("  Top %zu results\n", n);
+    std::printf("  Top %zu results\n", top_results.size());
     return top_results;
 }
 

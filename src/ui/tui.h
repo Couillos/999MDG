@@ -4,6 +4,7 @@
 #include "config/types.h"
 #include "metrics/types.h"
 #include "optimizer/types.h"
+#include <string>
 #include <atomic>
 #include <condition_variable>
 #include <map>
@@ -31,6 +32,12 @@ public:
     /// Returns true if user pressed 'q' to abort.
     bool should_abort() const { return abort_; }
 
+    /// Check if total combos have been set.
+    bool has_total() const { return total_combos_ > 0; }
+
+    /// Set total combos (called from callback when first discovered).
+    void set_total(size_t n) { total_combos_ = n; }
+
 private:
     std::vector<ScoringMetric> scoring_;
     std::map<std::string, Limit> limits_;
@@ -47,6 +54,10 @@ private:
     void draw_ui();
     std::string metric_value(const Metrics& m, const std::string& name) const;
 };
+
+/// Watch a live state JSON file (written by running optimization) and display
+/// ncurses TUI, updating every ~500ms. Exits when file disappears or 'q' pressed.
+void run_watch_tui(const std::string& state_path);
 
 } // namespace martingale
 

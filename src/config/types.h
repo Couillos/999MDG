@@ -51,6 +51,7 @@ struct ScoringMetric {
 /// Configuration for the optimizer (only used in OPTIMIZE mode).
 struct OptimizeConfig {
     int n_workers;
+    size_t max_iterations;
     std::map<std::string, Limit> limits;
     std::vector<ScoringMetric> scoring;
     std::map<std::string, std::array<double, 2>> bounds;

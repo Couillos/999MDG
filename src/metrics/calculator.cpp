@@ -136,8 +136,8 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
     double const cagr = std::pow(1.0 + total_ret, 252.0 / n_days) - 1.0;
     double const cagr_clamped = std::max(-0.999, std::min(cagr, 100.0));
 
-    double const mdd = max_drawdown(d_eq);
-    if (mdd > 0.0) m.calmar_ratio_usd = cagr_clamped / mdd;
+    m.drawdown_worst = max_drawdown(d_eq);
+    if (m.drawdown_worst > 0.0) m.calmar_ratio_usd = cagr_clamped / m.drawdown_worst;
 
     double const avg_dd = avg_drawdown(d_eq);
     double const st_denom = avg_dd + 0.10;

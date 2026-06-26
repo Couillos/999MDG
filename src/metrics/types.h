@@ -10,6 +10,7 @@ struct Metrics {
     double adg_per_exposure_long_usd = 0.0;
     double adg_per_exposure_short_usd = 0.0;
     double calmar_ratio_usd = 0.0;
+    double drawdown_worst = 0.0;
     double entry_initial_balance_pct_long = 0.0;
     double entry_initial_balance_pct_short = 0.0;
     double equity_balance_diff_neg_max_usd = 0.0;

@@ -90,6 +90,11 @@ OptimizeConfig parse_optimize(simdjson::ondemand::object opt) {
 
     oc.n_workers = static_cast<int>(opt_f64(opt, "n_workers", 0.0));
 
+    {
+        uint64_t mi;
+        oc.max_iterations = opt["max_iterations"].get_uint64().get(mi) ? 0 : static_cast<size_t>(mi);
+    }
+
     // limits
     simdjson::ondemand::object limits_obj;
     if (!opt["limits"].get_object().get(limits_obj)) {

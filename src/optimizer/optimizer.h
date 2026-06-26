@@ -22,13 +22,15 @@ using OptimizerCallback = std::function<void(const RunResult&, size_t, size_t)>;
 /// @param results_path  If non-empty, writes all results as zstd-compressed JSON
 /// @param callback      Optional progress callback invoked after each combo
 /// @param top_n         Number of top results to return (default 100)
+/// @param live_state_path  If non-empty, writes live state JSON here every 50 combos
 std::vector<RunResult> run_optimization(
     const Config& cfg,
     const std::vector<LoadedCandles>& per_symbol_candles,
     const std::vector<SymbolInfo>& symbols_info,
     const std::string& results_path = "",
     OptimizerCallback callback = nullptr,
-    size_t top_n = 100
+    size_t top_n = 100,
+    const std::string& live_state_path = ""
 );
 
 } // namespace martingale
