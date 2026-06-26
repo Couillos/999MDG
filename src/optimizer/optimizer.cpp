@@ -169,27 +169,31 @@ bool check_limits(const Metrics& m,
     return true;
 }
 
-/// Tracks per-metric min/max across observed results for min-max normalization.
-struct MetricTracker {
-    double min_val = std::numeric_limits<double>::max();
-    double max_val = std::numeric_limits<double>::lowest();
+/// Online z-score tracker (Welford's algorithm) for scale-independent scoring.
+struct ZScoreTracker {
+    double mean = 0.0;
+    double m2 = 0.0;
+    size_t count = 0;
 
     void observe(double val) {
-        if (val < min_val) min_val = val;
-        if (val > max_val) max_val = val;
+        ++count;
+        double const delta = val - mean;
+        mean += delta / static_cast<double>(count);
+        m2 += delta * (val - mean);
     }
 
     double normalize(double val) const {
-        double const range = max_val - min_val;
-        if (range < 1e-15) return 0.5;
-        return (val - min_val) / range;
+        if (count < 2) return 0.0;
+        double const variance = m2 / static_cast<double>(count - 1);
+        if (variance < 1e-15) return 0.0;
+        return (val - mean) / std::sqrt(variance);
     }
 };
 
 double compute_normalized_score(
     const Metrics& m,
     const std::vector<ScoringMetric>& scoring,
-    const std::vector<MetricTracker>& trackers) {
+    const std::vector<ZScoreTracker>& trackers) {
     double s = 0.0;
     for (size_t i = 0; i < scoring.size(); ++i) {
         s += trackers[i].normalize(get_metric_value(m, scoring[i].metric)) * scoring[i].weight;
@@ -404,8 +408,8 @@ std::vector<RunResult> run_optimization(
     auto const& limits = cfg.optimize.limits;
     auto const& scoring = cfg.optimize.scoring;
 
-    // Per-metric trackers for min-max normalized scoring
-    std::vector<MetricTracker> trackers(scoring.size());
+    // Per-metric trackers for z-score normalized scoring
+    std::vector<ZScoreTracker> trackers(scoring.size());
 
     // Setup combo iteration
     size_t const n_axes = axes.size();
