@@ -36,6 +36,12 @@ private:
     /// Writes a command string to a gnuplot pipe.
     void cmd(FILE* gp, const char* fmt, ...) const;
 
+    /// Returns the first and last timestamp in seconds.
+    void time_range(double& t0, double& t1) const;
+
+    /// Writes the standard preamble (dark theme, time axis, xrange).
+    void chart_preamble(FILE* gp, const char* png_name) const;
+
     /// Builds the chart title string from config.
     std::string title() const;
 };
