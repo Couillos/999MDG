@@ -8,8 +8,8 @@
 
 namespace martingale {
 
-/// Computes all performance metrics from the equity curve.
-Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
+/// Computes all performance metrics from the backtest result.
+Metrics compute_metrics(const BacktestResult& result,
                         const Config& cfg);
 
 } // namespace martingale

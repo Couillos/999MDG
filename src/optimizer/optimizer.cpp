@@ -252,7 +252,7 @@ Individual evaluate_individual(
     ind.generation = generation;
     ind.config = make_config_from_genes(base_cfg, axes, genes);
     auto const bt = run_backtest(ind.config, per_symbol_candles, symbols_info, "");
-    ind.metrics = compute_metrics(bt.equity_curve, ind.config);
+    ind.metrics = compute_metrics(bt, ind.config);
     ind.constraint_violation = compute_total_penalty(ind.metrics, limits);
     return ind;
 }

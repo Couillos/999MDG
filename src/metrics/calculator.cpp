@@ -168,8 +168,9 @@ std::pair<double, double> smoothed_terminal_gain_and_adg(const std::vector<doubl
 
 } // anonymous namespace
 
-Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
+Metrics compute_metrics(const BacktestResult& result,
                         const Config& cfg) {
+    auto const& equity_curve = result.equity_curve;
     Metrics m{};
     if (equity_curve.size() < 2) return m;
 
@@ -339,30 +340,21 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
         m.peak_recovery_hours_equity_usd = max_rh;
     }
 
-    // Position held hours
+    // Position held hours — computed from actual position entry/exit timestamps
+    // (like PassivBot's fill-based approach), not from equity curve exposure.
     {
-        double max_h = 0.0, sum_h = 0.0;
-        size_t cnt = 0;
-        std::vector<double> dur;
-        bool in_pos = false;
-        size_t pos_start = 0;
-        for (size_t i = 0; i < equity_curve.size(); ++i) {
-            bool const has_exp = equity_curve[i].exposure_usd > 0.0;
-            if (has_exp && !in_pos) { in_pos = true; pos_start = i; }
-            else if (!has_exp && in_pos) {
-                in_pos = false;
-                double const hrs = static_cast<double>(equity_curve[i].timestamp - equity_curve[pos_start].timestamp) / 3600000.0;
-                dur.push_back(hrs); sum_h += hrs; ++cnt;
-                if (hrs > max_h) max_h = hrs;
+        auto const& dur = result.position_durations_hours;
+        if (!dur.empty()) {
+            double sum_h = 0.0;
+            double max_h = dur[0];
+            for (auto h : dur) {
+                sum_h += h;
+                if (h > max_h) max_h = h;
             }
+            m.position_held_hours_max = max_h;
+            m.position_held_hours_mean = sum_h / static_cast<double>(dur.size());
+            m.position_held_hours_median = median(dur);
         }
-        if (in_pos) {
-            double const hrs = static_cast<double>(equity_curve.back().timestamp - equity_curve[pos_start].timestamp) / 3600000.0;
-            dur.push_back(hrs); sum_h += hrs; ++cnt;
-            if (hrs > max_h) max_h = hrs;
-        }
-        m.position_held_hours_max = max_h;
-        if (cnt > 0) { m.position_held_hours_mean = sum_h / static_cast<double>(cnt); m.position_held_hours_median = median(dur); }
     }
 
     // Position unchanged hours max

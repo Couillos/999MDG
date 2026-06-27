@@ -190,7 +190,7 @@ static void run_backtest(Config const& cfg) {
     std::printf("  Equity curve points: %zu\n", result.equity_curve.size());
 
     std::printf("Computing metrics...\n");
-    Metrics const metrics = compute_metrics(result.equity_curve, cfg);
+    Metrics const metrics = compute_metrics(result, cfg);
 
     std::string const json_path = res_dir + "/analysis.json";
     write_analysis_json(json_path, metrics, cfg, result.equity_curve);
@@ -230,7 +230,7 @@ static void backtest_and_report(Config cfg, const std::string& res_dir) {
     std::printf("  Equity curve points: %zu\n", result.equity_curve.size());
 
     std::printf("Computing metrics...\n");
-    Metrics const metrics = compute_metrics(result.equity_curve, cfg);
+    Metrics const metrics = compute_metrics(result, cfg);
 
     std::string const json_path = res_dir + "/analysis.json";
     write_analysis_json(json_path, metrics, cfg, result.equity_curve);
@@ -277,6 +277,12 @@ static void apply_params_to_cfg(Config& cfg, const std::map<std::string, double>
             cfg.strategy.parkinson_volatility_span = static_cast<int>(v);
         else if (k == "maker_fee_pct")
             cfg.strategy.maker_fee_pct = v;
+        else if (k == "time_based_unstuck_pct")
+            cfg.strategy.time_based_unstuck_pct = v;
+        else if (k == "time_based_unstuck_threshold")
+            cfg.strategy.time_based_unstuck_threshold = v;
+        else if (k == "time_based_unstuck_age")
+            cfg.strategy.time_based_unstuck_age = static_cast<int>(v);
         else if (k == "total_wallet_exposure")
             cfg.total_wallet_exposure = v;
     }

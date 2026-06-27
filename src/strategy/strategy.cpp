@@ -211,6 +211,20 @@ BacktestResult run_backtest(const Config& cfg,
             balance += positions[s].realized_pnl;
         }
 
+        // Track position entry/exit for position_held_hours (like PassivBot's fill-based approach)
+        for (size_t s = 0; s < n; ++s) {
+            bool const now_open = positions[s].total_qty > 1e-12;
+            bool const was_open = positions[s].entry_timestamp_ms != 0;
+            if (now_open && !was_open) {
+                positions[s].entry_timestamp_ms = current_candles[s]->timestamp;
+            } else if (!now_open && was_open) {
+                double hrs = static_cast<double>(
+                    current_candles[s]->timestamp - positions[s].entry_timestamp_ms) / 3600000.0;
+                result.position_durations_hours.push_back(hrs);
+                positions[s].entry_timestamp_ms = 0;
+            }
+        }
+
         // Record equity point
         double const exposure = total_exposure(positions, current_candles);
         double const equity = total_equity(balance, positions, current_candles);
@@ -249,6 +263,17 @@ BacktestResult run_backtest(const Config& cfg,
     if (eq_csv) std::fclose(eq_csv);
     if (ex_csv) std::fclose(ex_csv);
     if (pnl_csv) std::fclose(pnl_csv);
+
+    // Handle still-open positions (like PassivBot counts them too)
+    int64_t const last_ts = result.equity_curve.empty()
+        ? 0 : result.equity_curve.back().timestamp;
+    for (size_t s = 0; s < n; ++s) {
+        if (positions[s].entry_timestamp_ms != 0) {
+            double hrs = static_cast<double>(
+                last_ts - positions[s].entry_timestamp_ms) / 3600000.0;
+            result.position_durations_hours.push_back(hrs);
+        }
+    }
 
     result.final_positions = std::move(positions);
     return result;

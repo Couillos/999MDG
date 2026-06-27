@@ -12,7 +12,7 @@ bool check_time_based_unstuck(const Config& strat, const Candle& candle,
     }
 
     double const pct = strat.strategy.time_based_unstuck_pct;
-    double const threshold = strat.strategy.time_based_unstuck_threshold;
+    double const threshold_factor = strat.strategy.time_based_unstuck_threshold;
     int const age = strat.strategy.time_based_unstuck_age;
 
     if (pct <= 0.0 || age <= 0 || pos.entry_tick == 0) {
@@ -24,8 +24,14 @@ bool check_time_based_unstuck(const Config& strat, const Candle& candle,
         return false;
     }
 
-    double const upnl = (candle.close - pos.avg_entry_price) / pos.avg_entry_price;
-    if (upnl <= threshold) {
+    // Wallet exposure = position notional / balance (like PassivBot's calc_wallet_exposure)
+    double const wallet_exposure = std::abs(pos.total_qty * candle.close)
+                                 / strat.initial_balance_usd;
+    // Per-position wallet exposure limit (like PassivBot's wel per coin/side)
+    double const n_pos = static_cast<double>(std::max(strat.strategy.n_positions, 1));
+    double const wel = strat.total_wallet_exposure / n_pos;
+    // Skip if wallet_exposure < wel * threshold_factor (like PassivBot's threshold check)
+    if (threshold_factor > 0.0 && wallet_exposure < wel * threshold_factor) {
         return false;
     }
 
@@ -34,10 +40,29 @@ bool check_time_based_unstuck(const Config& strat, const Candle& candle,
         return false;
     }
 
+    // Each level closes a fixed exposure tranche = pct of initial balance.
+    // close_qty = (pct * initial_balance) / current_price
+    // This is independent of remaining qty. If the tranche exceeds the
+    // remaining position, the whole position is closed.
+    double const exposure_tranche = pct * strat.initial_balance_usd;
+
     double total_closed = 0.0;
     for (int lvl = pos.unstuck_levels; lvl < expected; ++lvl) {
-        double const close_qty = pos.total_qty * pct;
+        double const close_qty = std::min(
+            exposure_tranche / candle.close,
+            pos.total_qty
+        );
+
         if (close_qty < 1e-12) {
+            if (pos.total_qty > 1e-12) {
+                double const fee = std::abs(pos.total_qty * candle.close)
+                                 * strat.strategy.maker_fee_pct;
+                pos.realized_pnl += pos.total_qty * (candle.close - pos.avg_entry_price) - fee;
+                pos.traded_qty += pos.total_qty;
+                total_closed += pos.total_qty;
+                pos.total_qty = 0.0;
+                pos.unstuck_levels = lvl + 1;
+            }
             break;
         }
 
@@ -50,12 +75,9 @@ bool check_time_based_unstuck(const Config& strat, const Candle& candle,
         pos.unstuck_levels = lvl + 1;
 
         if (pos.total_qty < 1e-12) {
+            pos.total_qty = 0.0;
             break;
         }
-    }
-
-    if (std::abs(pos.total_qty) < 1e-12) {
-        pos.total_qty = 0.0;
     }
 
     return total_closed > 0.0;

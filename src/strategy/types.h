@@ -15,6 +15,7 @@ struct Position {
     double realized_pnl = 0.0;
     int entry_levels = 0;
     int64_t entry_tick = 0;
+    int64_t entry_timestamp_ms = 0;
     int unstuck_levels = 0;
 };
 
@@ -31,6 +32,10 @@ struct EquityPoint {
 struct BacktestResult {
     std::vector<EquityPoint> equity_curve;
     std::vector<Position> final_positions;
+    /// Duration in hours of each position that was opened and closed.
+    /// Computed from position entry/exit timestamps during the backtest.
+    /// Mirrors PassivBot's fill-based position_held_hours calculation.
+    std::vector<double> position_durations_hours;
 };
 
 } // namespace martingale

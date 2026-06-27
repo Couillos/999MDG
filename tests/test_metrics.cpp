@@ -24,12 +24,19 @@ Config make_cfg() {
     return cfg;
 }
 
+/// Wraps an equity curve into a BacktestResult for compute_metrics.
+BacktestResult make_result(std::vector<EquityPoint> curve) {
+    BacktestResult r;
+    r.equity_curve = std::move(curve);
+    return r;
+}
+
 } // anonymous namespace
 
 TEST(MetricsTest, EmptyCurveReturnsDefaults) {
     auto cfg = make_cfg();
     std::vector<EquityPoint> empty;
-    auto m = compute_metrics(empty, cfg);
+    auto m = compute_metrics(make_result(empty), cfg);
     EXPECT_DOUBLE_EQ(m.gain_usd, 0.0);
     EXPECT_DOUBLE_EQ(m.sharpe_ratio_usd, 0.0);
     EXPECT_DOUBLE_EQ(m.sortino_ratio_usd, 0.0);
@@ -41,7 +48,7 @@ TEST(MetricsTest, SinglePointReturnsDefaults) {
     std::vector<EquityPoint> curve = {
         {0, 10000.0, 10000.0, 0.0, {}}
     };
-    auto m = compute_metrics(curve, cfg);
+    auto m = compute_metrics(make_result(curve), cfg);
     EXPECT_DOUBLE_EQ(m.gain_usd, 0.0);
     EXPECT_DOUBLE_EQ(m.sharpe_ratio_usd, 0.0);
 }
@@ -56,7 +63,7 @@ TEST(MetricsTest, LinearGrowth) {
         curve.push_back({ts, eq, eq, 0.0, {}});
         ts += 86400000; // 1 day
     }
-    auto m = compute_metrics(curve, cfg);
+    auto m = compute_metrics(make_result(curve), cfg);
 
     // gain_usd should be the sum of positive equity changes
     EXPECT_GT(m.gain_usd, 0.0);
@@ -90,7 +97,7 @@ TEST(MetricsTest, VolatileCurve) {
         }
         ts += 86400000;
     }
-    auto m = compute_metrics(curve, cfg);
+    auto m = compute_metrics(make_result(curve), cfg);
 
     // There should be both positive and negative swings
     EXPECT_GT(m.gain_usd, 0.0);
@@ -113,7 +120,7 @@ TEST(MetricsTest, SharpeAndSortinoConsistency) {
         eq += 50.0; // steady uptrend with no downside
         ts += 86400000;
     }
-    auto m = compute_metrics(curve, cfg);
+    auto m = compute_metrics(make_result(curve), cfg);
 
     // In a pure uptrend without downside, sortino >= sharpe (less downside risk)
     EXPECT_GE(m.sortino_ratio_usd, m.sharpe_ratio_usd);
@@ -137,7 +144,7 @@ TEST(MetricsTest, LossProfitRatio) {
         eq += (i % 2 == 0) ? 200.0 : -100.0;
         ts += 86400000;
     }
-    auto m = compute_metrics(curve, cfg);
+    auto m = compute_metrics(make_result(curve), cfg);
 
     // Should have positive loss_profit_ratio (total gains > total losses)
     EXPECT_GT(m.loss_profit_ratio, 0.0);
@@ -154,7 +161,7 @@ TEST(MetricsTest, AdgSmoothed) {
         curve.push_back({ts, eq, eq, 0.0, {}});
         ts += 86400000;
     }
-    auto m = compute_metrics(curve, cfg);
+    auto m = compute_metrics(make_result(curve), cfg);
 
     // d_eq = [10000, 10010, ..., 10090]
     // PassivBot formula: EMA(alpha=0.5) over full series
@@ -183,7 +190,7 @@ TEST(MetricsTest, DrawdownWorstMean1Pct) {
         curve.push_back({ts, eq, eq, 0.0, {}});
         ts += 86400000;
     }
-    auto m = compute_metrics(curve, cfg);
+    auto m = compute_metrics(make_result(curve), cfg);
 
     // daily_dd = [0.0 (x150), -0.20 (x50)]
     // sorted: [-0.20 (x50), 0.0 (x150)]
@@ -203,7 +210,7 @@ TEST(MetricsTest, SterlingRatio) {
         curve.push_back({ts, eq, eq, 0.0, {}});
         ts += 86400000;
     }
-    auto m = compute_metrics(curve, cfg);
+    auto m = compute_metrics(make_result(curve), cfg);
 
     // d_eq = [10000 (x150), 8000 (x50)]
     // tail_len = 3, end = 8000, start = 10000
