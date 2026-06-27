@@ -88,7 +88,10 @@ static void write_analysis_json(const std::string& path, const Metrics& m,
     std::fprintf(f, "      \"sl_upnl_pct\": %.4f,\n", cfg.strategy.sl_upnl_pct);
     std::fprintf(f, "      \"n_positions\": %d,\n", cfg.strategy.n_positions);
     std::fprintf(f, "      \"parkinson_volatility_span\": %d,\n", cfg.strategy.parkinson_volatility_span);
-    std::fprintf(f, "      \"maker_fee_pct\": %.6f\n", cfg.strategy.maker_fee_pct);
+    std::fprintf(f, "      \"maker_fee_pct\": %.6f,\n", cfg.strategy.maker_fee_pct);
+    std::fprintf(f, "      \"time_based_unstuck_pct\": %.4f,\n", cfg.strategy.time_based_unstuck_pct);
+    std::fprintf(f, "      \"time_based_unstuck_threshold\": %.4f,\n", cfg.strategy.time_based_unstuck_threshold);
+    std::fprintf(f, "      \"time_based_unstuck_age\": %d\n", cfg.strategy.time_based_unstuck_age);
     std::fprintf(f, "    },\n");
     std::fprintf(f, "    \"initial_balance_usd\": %.2f,\n", cfg.initial_balance_usd);
     std::fprintf(f, "    \"total_wallet_exposure\": %.4f\n", cfg.total_wallet_exposure);
@@ -103,6 +106,7 @@ static void write_analysis_json(const std::string& path, const Metrics& m,
     std::fprintf(f, "  \"total_return_pct\": %.4f,\n", total_return);
 
     std::fprintf(f, "  \"metrics\": {\n");
+    std::fprintf(f, "    \"gain\": %.10f,\n", m.gain);
     std::fprintf(f, "    \"adg_smoothed\": %.10f,\n", m.adg_smoothed);
     std::fprintf(f, "    \"adg_usd\": %.10f,\n", m.adg_usd);
     std::fprintf(f, "    \"adg_per_exponential_fit_error_usd\": %.10f,\n", m.adg_per_exponential_fit_error_usd);
@@ -193,7 +197,7 @@ static void run_backtest(Config const& cfg) {
     std::printf("  Wrote %s\n", json_path.c_str());
 
     std::printf("Generating charts...\n");
-    Plotter plotter(cfg, result.equity_curve, res_dir);
+    Plotter plotter(cfg, result.equity_curve, metrics, res_dir);
     plotter.generate_all();
 
     if (!result.equity_curve.empty()) {
@@ -233,7 +237,7 @@ static void backtest_and_report(Config cfg, const std::string& res_dir) {
     std::printf("  Wrote %s\n", json_path.c_str());
 
     std::printf("Generating charts...\n");
-    Plotter plotter(cfg, result.equity_curve, res_dir);
+    Plotter plotter(cfg, result.equity_curve, metrics, res_dir);
     plotter.generate_all();
 
     if (!result.equity_curve.empty()) {

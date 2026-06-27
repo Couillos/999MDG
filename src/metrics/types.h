@@ -23,6 +23,7 @@ struct Metrics {
     double equity_jerkiness_usd = 0.0;
     double expected_shortfall_1pct_usd = 0.0;
     double exponential_fit_error_usd = 0.0;
+    double gain = 0.0;       // smoothed terminal geometric gain ratio (PassivBot)
     double gain_usd = 0.0;
     double gain_per_exposure_long_usd = 0.0;
     double gain_per_exposure_short_usd = 0.0;

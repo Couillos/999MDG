@@ -157,6 +157,7 @@ double get_metric_value(const Metrics& m, const std::string& name) {
     if (name == "equity_jerkiness_usd") return m.equity_jerkiness_usd;
     if (name == "expected_shortfall_1pct_usd") return m.expected_shortfall_1pct_usd;
     if (name == "exponential_fit_error_usd") return m.exponential_fit_error_usd;
+    if (name == "gain") return m.gain;
     if (name == "gain_usd") return m.gain_usd;
     if (name == "gain_per_exposure_long_usd") return m.gain_per_exposure_long_usd;
     if (name == "gain_per_exposure_short_usd") return m.gain_per_exposure_short_usd;
@@ -305,6 +306,7 @@ void write_result_json(FILE* f, const Individual& ind,
     std::fprintf(f, ",\"drawdown_worst\":%.10f", ind.metrics.drawdown_worst);
     std::fprintf(f, ",\"drawdown_worst_mean_1pct\":%.10f", ind.metrics.drawdown_worst_mean_1pct);
     std::fprintf(f, ",\"mdg_usd\":%.10f", ind.metrics.mdg_usd);
+    std::fprintf(f, ",\"gain\":%.10f", ind.metrics.gain);
     std::fprintf(f, ",\"gain_usd\":%.10f", ind.metrics.gain_usd);
     std::fprintf(f, ",\"loss_profit_ratio\":%.10f", ind.metrics.loss_profit_ratio);
     std::fprintf(f, ",\"sterling_ratio\":%.10f", ind.metrics.sterling_ratio);

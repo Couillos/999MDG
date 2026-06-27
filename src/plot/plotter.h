@@ -2,6 +2,7 @@
 #define MARTINGALE_PLOT_PLOTTER_H
 
 #include "config/types.h"
+#include "metrics/types.h"
 #include "strategy/types.h"
 #include <string>
 #include <vector>
@@ -14,6 +15,7 @@ class Plotter {
 public:
     Plotter(const Config& cfg,
             const std::vector<EquityPoint>& equity_curve,
+            const Metrics& metrics,
             const std::string& results_dir);
 
     /// Generates equity_chart.png: equity + balance curves.
@@ -31,6 +33,7 @@ public:
 private:
     const Config& cfg_;
     const std::vector<EquityPoint>& curve_;
+    Metrics metrics_;
     std::string dir_;
 
     /// Writes a command string to a gnuplot pipe.

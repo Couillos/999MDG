@@ -10,6 +10,38 @@
 
 namespace martingale {
 
+/// Generate a unique short abbreviation for a parameter name.
+std::string param_abbrev(const std::string& name) {
+    auto known = [&]() -> std::string {
+        if (name == "entry_ema_period") return "ema";
+        if (name == "entry_ema_distance_pct") return "ema_dis";
+        if (name == "entry_grid_spacing_pct") return "gspc";
+        if (name == "initial_qty_pct") return "iqty";
+        if (name == "double_down_factor") return "ddf";
+        if (name == "close_grid_spacing_pct") return "cgspc";
+        if (name == "close_grid_count") return "cgcnt";
+        if (name == "sl_upnl_pct") return "sl";
+        if (name == "n_positions") return "npos";
+        if (name == "parkinson_volatility_span") return "pvol";
+        if (name == "maker_fee_pct") return "mfee";
+        if (name == "time_based_unstuck_pct") return "tup";
+        if (name == "time_based_unstuck_threshold") return "tut";
+        if (name == "time_based_unstuck_age") return "tua";
+        if (name == "total_wallet_exposure") return "twle";
+        return "";
+    };
+    std::string k = known();
+    if (!k.empty()) return k;
+    auto strip = [&](const std::string& suf) {
+        if (name.size() > suf.size() && name.substr(name.size() - suf.size()) == suf)
+            return name.substr(0, name.size() - suf.size());
+        return name;
+    };
+    std::string s = strip("_usd");
+    s = strip("_pct");
+    return s.size() > 8 ? s.substr(0, 8) : s;
+}
+
 OptimizerTUI::OptimizerTUI(const std::vector<ScoringMetric>& scoring,
                            const std::map<std::string, Limit>& limits,
                            size_t total_combos)
@@ -85,106 +117,105 @@ void OptimizerTUI::draw_ui() {
         sorted = results_;
     }
 
-    // Sort by Pareto rank (ascending) then crowding distance (descending)
+    // Filter only Pareto front (rank == 1), sort by crowding distance descending
+    sorted.erase(std::remove_if(sorted.begin(), sorted.end(),
+        [](const RunResult& r) { return r.rank != 1; }), sorted.end());
     std::sort(sorted.begin(), sorted.end(),
         [](const RunResult& a, const RunResult& b) {
-            if (a.rank != b.rank) return a.rank < b.rank;
             return a.crowding_distance > b.crowding_distance;
         });
 
-    size_t const n = std::min(size_t{25}, sorted.size());
     size_t const completed = completed_.load();
 
     erase();
 
+    int const cols = COLS > 0 ? COLS : 80;
+    int const max_rows = LINES - 4;
+
     // Title
     attron(A_BOLD | COLOR_PAIR(1));
-    mvprintw(0, 0, "Martingale Optimizer  |  Gen: %zu/%zu  |  Top 25 Live",
-             completed, total_combos_);
+    mvprintw(0, 0, "Martingale Optimizer  |  Gen: %zu/%zu  |  Pareto Front (%zu cand.)",
+             completed, total_combos_, sorted.size());
     attroff(A_BOLD | COLOR_PAIR(1));
 
-    if (completed == 0) {
+    if (completed == 0 || sorted.empty()) {
         mvprintw(2, 0, "Waiting for results...");
         refresh();
         return;
     }
 
-    // Build column headers: Pareto rank, params, objectives, limits
-    int const rank_w = 5;
-    int const param_w = 28;
-    int const objs_w = 12;
-    int const metric_w = 12;
-
-    int x = 0;
-    mvprintw(2, x, "%-*s", rank_w, "Rank");
-    x += rank_w;
-    mvprintw(2, x, "%-*s", param_w, "Params");
-    x += param_w;
-
-    for (const auto& sm : scoring_) {
-        std::string label = sm.metric.substr(0, 11);
-        mvprintw(2, x, "%-*s", objs_w, label.c_str());
-        x += objs_w;
-    }
-    for (const auto& [name, _] : limits_) {
-        std::string label = name.substr(0, 11);
-        mvprintw(2, x, "%-*s", metric_w, label.c_str());
-        x += metric_w;
-    }
-
-    // Separator
-    mvprintw(3, 0, "%*c", x, ' ');
-    for (int i = 0; i < x; ++i) {
-        mvaddch(3, i, '-');
-    }
-
-    // Data rows (top 25)
-    for (size_t i = 0; i < n; ++i) {
-        int row = static_cast<int>(i) + 4;
-        const auto& r = sorted[i];
-
-        x = 0;
-        int const pair = r.rank == 1 ? 2 : (r.constraint_violation < 1e-10 ? 1 : 3);
-        attron(COLOR_PAIR(pair));
-        mvprintw(row, x, "%-*d", rank_w, r.rank);
-        attroff(COLOR_PAIR(pair));
-        x += rank_w;
-
-        std::string params_str;
-        for (const auto& [k, v] : r.params) {
-            if (!params_str.empty()) params_str += " ";
-            params_str += k.substr(0, 8) + "=";
-            char buf[16];
+    auto fmt_val = [](double v) -> std::string {
+        char buf[16];
+        if (v >= 10000.0 || v <= -10000.0) {
+            std::snprintf(buf, sizeof(buf), "%.1f", v);
+        } else if (v >= 100.0 || v <= -100.0) {
+            std::snprintf(buf, sizeof(buf), "%.2f", v);
+        } else if (v >= 1.0 || v <= -1.0) {
             std::snprintf(buf, sizeof(buf), "%.4f", v);
-            params_str += buf;
+        } else {
+            std::snprintf(buf, sizeof(buf), "%.6f", v);
         }
-        if (params_str.size() > param_w) params_str = params_str.substr(0, param_w - 1);
-        mvprintw(row, x, "%-*s", param_w, params_str.c_str());
-        x += param_w;
+        return std::string(buf);
+    };
 
+    int cur_row = 2;
+    int const rank_w = 4;
+
+    for (size_t ci = 0; ci < sorted.size() && cur_row < max_rows - 1; ++ci) {
+        const auto& r = sorted[ci];
+
+        // Build metric parts: scoring metrics first, then limit metrics, then cv
+        std::vector<std::string> parts;
         for (const auto& sm : scoring_) {
-            std::string val = metric_value(r.metrics, sm.metric);
-            mvprintw(row, x, "%-*s", objs_w, val.c_str());
-            x += objs_w;
+            parts.push_back(param_abbrev(sm.metric) + ":" +
+                            metric_value(r.metrics, sm.metric));
         }
         for (const auto& [name, _] : limits_) {
-            std::string val = metric_value(r.metrics, name);
-            mvprintw(row, x, "%-*s", metric_w, val.c_str());
-            x += metric_w;
+            parts.push_back(param_abbrev(name) + ":" +
+                            metric_value(r.metrics, name));
         }
+        parts.push_back("cv:" + fmt_val(r.constraint_violation));
+
+        // Single line: " 1 | sr:1.23 cr:0.98 mdg:0.0004 | dd:0.12 cv:320"
+        int const indent = rank_w + 1;
+        int avail = cols - indent - 1;
+
+        attron(COLOR_PAIR(2));
+        mvprintw(cur_row, 0, "%-*d", rank_w, 1);
+        attroff(COLOR_PAIR(2));
+        int used = indent;
+        int idx = 0;
+        bool first_metric = true;
+        for (; idx < (int)parts.size(); ++idx) {
+            int need = (int)parts[idx].size() + 1;
+            if (used + need >= avail) break;
+            mvprintw(cur_row, used, "%s ", parts[idx].c_str());
+            used += need;
+        }
+        // If we overflow, show remaining on next line (should rarely happen)
+        if (idx < (int)parts.size() && cur_row < max_rows - 2) {
+            ++cur_row;
+            mvprintw(cur_row, 0, "%*c", indent, ' ');
+            used = indent;
+            for (; idx < (int)parts.size(); ++idx) {
+                int need = (int)parts[idx].size() + 1;
+                if (used + need >= avail) break;
+                mvprintw(cur_row, used, "%s ", parts[idx].c_str());
+                used += need;
+            }
+        }
+        ++cur_row;
     }
 
     // Footer
     if (done_) {
-        mvprintw(static_cast<int>(n) + 5, 0, " Optimization complete! Press any key to continue.");
+        mvprintw(LINES - 1, 0, " Optimization complete! Press any key to continue.");
     } else {
-        mvprintw(static_cast<int>(n) + 5, 0, " Press 'q' to abort optimization.");
+        mvprintw(LINES - 1, 0, " Press 'q' to abort optimization.");
     }
 
     refresh();
 }
-
-namespace {
 
 std::string format_metric(const Metrics& m, const std::string& name) {
     char buf[16];
@@ -206,6 +237,7 @@ std::string format_metric(const Metrics& m, const std::string& name) {
     if (name == "equity_balance_diff_neg_max_usd") return get(m.equity_balance_diff_neg_max_usd);
     if (name == "equity_balance_diff_neg_mean_usd") return get(m.equity_balance_diff_neg_mean_usd);
     if (name == "expected_shortfall_1pct_usd") return get(m.expected_shortfall_1pct_usd);
+    if (name == "gain") return get(m.gain);
     if (name == "gain_usd") return get(m.gain_usd);
     if (name == "gain_per_exposure_long_usd") return get(m.gain_per_exposure_long_usd);
     if (name == "gain_per_exposure_short_usd") return get(m.gain_per_exposure_short_usd);
@@ -245,6 +277,7 @@ void set_metric_value(Metrics& m, const std::string& name, double val) {
     if (name == "equity_jerkiness_usd") { m.equity_jerkiness_usd = val; return; }
     if (name == "expected_shortfall_1pct_usd") { m.expected_shortfall_1pct_usd = val; return; }
     if (name == "exponential_fit_error_usd") { m.exponential_fit_error_usd = val; return; }
+    if (name == "gain") { m.gain = val; return; }
     if (name == "gain_usd") { m.gain_usd = val; return; }
     if (name == "gain_per_exposure_long_usd") { m.gain_per_exposure_long_usd = val; return; }
     if (name == "gain_per_exposure_short_usd") { m.gain_per_exposure_short_usd = val; return; }
@@ -267,8 +300,6 @@ void set_metric_value(Metrics& m, const std::string& name, double val) {
     if (name == "sterling_ratio") { m.sterling_ratio = val; return; }
     if (name == "volume_pct_per_day_avg") { m.volume_pct_per_day_avg = val; return; }
 }
-
-} // anonymous namespace
 
 std::string OptimizerTUI::metric_value(const Metrics& m, const std::string& name) const {
     return format_metric(m, name);
@@ -431,72 +462,77 @@ void run_watch_tui(const std::string& state_path) {
             continue;
         }
 
-        // Sort by Pareto rank (ascending) then objectives for display
+        // Filter only Pareto front (rank == 1), sort by crowding distance descending
+        top.erase(std::remove_if(top.begin(), top.end(),
+            [](const RunResult& r) { return r.rank != 1; }), top.end());
         std::sort(top.begin(), top.end(),
             [](const RunResult& a, const RunResult& b) {
-                if (a.rank != b.rank) return a.rank < b.rank;
-                if (a.constraint_violation != b.constraint_violation)
-                    return a.constraint_violation < b.constraint_violation;
                 return a.crowding_distance > b.crowding_distance;
             });
 
-        // Column headers
-        int const rank_w = 5;
-        int const param_w = 28;
-        int const objs_w = 12;
-        int const metric_w = 12;
+        int const cols = COLS > 0 ? COLS : 80;
+        int const max_rows = LINES - 4;
+        int cur_row = 2;
+        int const rank_w = 4;
 
-        int x = 0;
-        mvprintw(2, x, "%-*s", rank_w, "Rank"); x += rank_w;
-        mvprintw(2, x, "%-*s", param_w, "Params"); x += param_w;
-        for (const auto& sm : scoring) {
-            std::string label = sm.metric.substr(0, 11);
-            mvprintw(2, x, "%-*s", objs_w, label.c_str());
-            x += objs_w;
-        }
-        for (const auto& [name, _] : limits) {
-            std::string label = name.substr(0, 11);
-            mvprintw(2, x, "%-*s", metric_w, label.c_str());
-            x += metric_w;
-        }
-
-        mvprintw(3, 0, "%*c", x, ' ');
-        for (int i = 0; i < x; ++i) mvaddch(3, i, '-');
-
-        size_t const n = std::min(size_t{25}, top.size());
-        for (size_t i = 0; i < n; ++i) {
-            int row = static_cast<int>(i) + 4;
-            const auto& r = top[i];
-            x = 0;
-
-            int const pair = r.rank == 1 ? 2 : (r.constraint_violation < 1e-10 ? 1 : 3);
-            attron(COLOR_PAIR(pair));
-            mvprintw(row, x, "%-*d", rank_w, r.rank);
-            attroff(COLOR_PAIR(pair));
-            x += rank_w;
-
-            std::string params_str;
-            for (const auto& [k, v] : r.params) {
-                if (!params_str.empty()) params_str += " ";
-                params_str += k.substr(0, 8) + "=";
-                char buf[16];
+        auto fmt_val = [](double v) -> std::string {
+            char buf[16];
+            if (v >= 10000.0 || v <= -10000.0) {
+                std::snprintf(buf, sizeof(buf), "%.1f", v);
+            } else if (v >= 100.0 || v <= -100.0) {
+                std::snprintf(buf, sizeof(buf), "%.2f", v);
+            } else if (v >= 1.0 || v <= -1.0) {
                 std::snprintf(buf, sizeof(buf), "%.4f", v);
-                params_str += buf;
+            } else {
+                std::snprintf(buf, sizeof(buf), "%.6f", v);
             }
-            if (params_str.size() > param_w) params_str = params_str.substr(0, param_w - 1);
-            mvprintw(row, x, "%-*s", param_w, params_str.c_str()); x += param_w;
+            return std::string(buf);
+        };
 
+        for (size_t ci = 0; ci < top.size() && cur_row < max_rows - 1; ++ci) {
+            const auto& r = top[ci];
+
+            // Build parts: scoring metrics, limit metrics, cv
+            std::vector<std::string> parts;
             for (const auto& sm : scoring) {
-                mvprintw(row, x, "%-*s", objs_w, format_metric(r.metrics, sm.metric).c_str());
-                x += objs_w;
+                parts.push_back(param_abbrev(sm.metric) + ":" +
+                                format_metric(r.metrics, sm.metric));
             }
             for (const auto& [name, _] : limits) {
-                mvprintw(row, x, "%-*s", metric_w, format_metric(r.metrics, name).c_str());
-                x += metric_w;
+                parts.push_back(param_abbrev(name) + ":" +
+                                format_metric(r.metrics, name));
             }
+            parts.push_back("cv:" + fmt_val(r.constraint_violation));
+
+            int const indent = rank_w + 1;
+            int avail = cols - indent - 1;
+
+            attron(COLOR_PAIR(2));
+            mvprintw(cur_row, 0, "%-*d", rank_w, 1);
+            attroff(COLOR_PAIR(2));
+            int used = indent;
+            int idx = 0;
+            for (; idx < (int)parts.size(); ++idx) {
+                int need = (int)parts[idx].size() + 1;
+                if (used + need >= avail) break;
+                mvprintw(cur_row, used, "%s ", parts[idx].c_str());
+                used += need;
+            }
+            if (idx < (int)parts.size() && cur_row < max_rows - 2) {
+                ++cur_row;
+                mvprintw(cur_row, 0, "%*c", indent, ' ');
+                used = indent;
+                for (; idx < (int)parts.size(); ++idx) {
+                    int need = (int)parts[idx].size() + 1;
+                    if (used + need >= avail) break;
+                    mvprintw(cur_row, used, "%s ", parts[idx].c_str());
+                    used += need;
+                }
+            }
+            ++cur_row;
         }
 
-        mvprintw(static_cast<int>(n) + 5, 0, " %s Press 'q' to quit.",
+        mvprintw(LINES - 1, 0, " %s Press 'q' to quit.",
                  is_done ? "Optimization complete. Results preserved." : "Watching live state.");
         refresh();
     }

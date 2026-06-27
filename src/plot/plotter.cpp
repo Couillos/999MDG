@@ -9,10 +9,27 @@
 
 namespace martingale {
 
+namespace {
+std::string fmt_metric(double v) {
+    char buf[32];
+    if (v >= 1000.0 || v <= -1000.0) {
+        std::snprintf(buf, sizeof(buf), "%.2f", v);
+    } else if (v >= 1.0 || v <= -1.0) {
+        std::snprintf(buf, sizeof(buf), "%.4f", v);
+    } else if (v >= 0.01 || v <= -0.01) {
+        std::snprintf(buf, sizeof(buf), "%.6f", v);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%.8f", v);
+    }
+    return std::string(buf);
+}
+} // anonymous namespace
+
 Plotter::Plotter(const Config& cfg,
                  const std::vector<EquityPoint>& equity_curve,
+                 const Metrics& metrics,
                  const std::string& results_dir)
-    : cfg_(cfg), curve_(equity_curve), dir_(results_dir) {}
+    : cfg_(cfg), curve_(equity_curve), metrics_(metrics), dir_(results_dir) {}
 
 void Plotter::cmd(FILE* gp, const char* fmt, ...) const {
     va_list args;
@@ -69,8 +86,26 @@ void Plotter::equity_chart() {
     std::string const csv = dir_ + "/data/equity_curve.csv";
     chart_preamble(gp, "equity_chart.png");
     cmd(gp, "set title textcolor rgb '%s' font ',14' \"Equity & Balance — %s\"\n", plot::TEXT, title().c_str());
+
+    // Metrics overlay label (inspired by plot_balance_equity_jk2.py create_metrics_panel)
+    double const tr = curve_.size() >= 2
+        ? (curve_.back().equity - curve_.front().equity) / curve_.front().equity * 100.0
+        : 0.0;
+    std::string const label_text =
+        "Sharpe: " + fmt_metric(metrics_.sharpe_ratio_usd)
+        + "  |  Calmar: " + fmt_metric(metrics_.calmar_ratio_usd)
+        + "\\nGain: " + fmt_metric(metrics_.gain)
+        + "  |  ADG: " + fmt_metric(metrics_.adg_usd)
+        + "\\nMDG: " + fmt_metric(metrics_.mdg_usd)
+        + "  |  DD: " + fmt_metric(metrics_.drawdown_worst)
+        + "\\nReturn: " + fmt_metric(tr) + "%"
+        + "  |  Vol: " + fmt_metric(metrics_.volume_pct_per_day_avg);
+
+    cmd(gp, "set label 1 at graph 0.02, graph 0.98 leftfront \"%s\" tc rgb '%s' font ',9' boxed bs 1 borderc rgb '%s' fillcolor rgb '#1a1a2e'\n",
+        label_text.c_str(), plot::TEXT, plot::GRID);
+
     cmd(gp, "plot '%s' every ::1 using ($1/1000):2 with lines lw 2 lc rgb '%s' title 'Equity', ", csv.c_str(), plot::EQUITY);
-    cmd(gp, "'%s' every ::1 using ($1/1000):3 with lines dt 2 lw 2 lc rgb '%s' title 'Balance'\n", csv.c_str(), plot::BALANCE);
+    cmd(gp, "'%s' every ::1 using ($1/1000):3 with lines lw 2 lc rgb '%s' title 'Balance'\n", csv.c_str(), plot::BALANCE);
 
     int const ret = pclose(gp);
     if (ret == 0) {

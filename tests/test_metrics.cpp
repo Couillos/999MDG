@@ -157,10 +157,16 @@ TEST(MetricsTest, AdgSmoothed) {
     auto m = compute_metrics(curve, cfg);
 
     // d_eq = [10000, 10010, ..., 10090]
-    // tail_len = 3, end = mean([10070, 10080, 10090]) = 10080
-    // start = 10000, gain = 1.008
-    // adg_smoothed = 1.008^(1/10) - 1
-    double const expected = std::pow(10080.0 / 10000.0, 1.0 / 10.0) - 1.0;
+    // PassivBot formula: EMA(alpha=0.5) over full series
+    // smoothed[0] = 10000, ..., smoothed[9] = 10080.01953125
+    // gain = 10080.01953125/10000, adg = gain^(1/10) - 1
+    double expected = 10000.0;
+    double const alpha = 2.0 / 4.0; // span=3
+    for (int i = 10010; i <= 10090; i += 10) {
+        expected = alpha * static_cast<double>(i) + (1.0 - alpha) * expected;
+    }
+    double const gain = expected / 10000.0;
+    expected = std::pow(gain, 1.0 / 10.0) - 1.0;
     EXPECT_NEAR(m.adg_smoothed, expected, 1e-15);
 
     // No drawdown means drawdown_worst_mean_1pct stays 0

@@ -179,6 +179,32 @@ BacktestResult run_backtest(const Config& cfg,
             }
         }
 
+        // Step e: enforce exposure limit (auto-reduce if > 1% over limit)
+        // PassivBot-style: when wallet_exposure_ratio > 1.01, crop position
+        {
+            double const we_limit = cfg.total_wallet_exposure
+                                  / static_cast<double>(cfg.strategy.n_positions);
+            for (size_t s = 0; s < n; ++s) {
+                if (positions[s].total_qty > 1e-12 && balance > 0.0) {
+                    double const we = std::abs(positions[s].total_qty
+                                             * current_candles[s]->close) / balance;
+                    if (we > we_limit * 1.01) {
+                        double const ideal_qty = we_limit * 1.01 * balance
+                                               / current_candles[s]->close;
+                        double const reduce_qty = positions[s].total_qty - ideal_qty;
+                        if (reduce_qty > 1e-12) {
+                            double const fee = std::abs(reduce_qty * current_candles[s]->close)
+                                             * cfg.strategy.maker_fee_pct;
+                            positions[s].realized_pnl += reduce_qty
+                                * (current_candles[s]->close - positions[s].avg_entry_price) - fee;
+                            positions[s].total_qty -= reduce_qty;
+                            positions[s].traded_qty += reduce_qty;
+                        }
+                    }
+                }
+            }
+        }
+
         // Recompute balance from realized PnL
         balance = cfg.initial_balance_usd;
         for (size_t s = 0; s < n; ++s) {

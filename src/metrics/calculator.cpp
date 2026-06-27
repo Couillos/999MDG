@@ -26,6 +26,26 @@ std::vector<double> daily_equity(const std::vector<EquityPoint>& curve) {
     return daily;
 }
 
+/// Extracts the minimum equity value per day (PassivBot: daily_min_equity).
+std::vector<double> daily_min_equity(const std::vector<EquityPoint>& curve) {
+    if (curve.empty()) return {};
+    std::vector<double> daily;
+    int64_t prev_day = curve[0].timestamp - (curve[0].timestamp % 86400000);
+    double min_eq = curve[0].equity;
+    for (size_t i = 1; i < curve.size(); ++i) {
+        int64_t const day = curve[i].timestamp - (curve[i].timestamp % 86400000);
+        if (day != prev_day) {
+            daily.push_back(min_eq);
+            prev_day = day;
+            min_eq = curve[i].equity;
+        } else if (curve[i].equity < min_eq) {
+            min_eq = curve[i].equity;
+        }
+    }
+    daily.push_back(min_eq);
+    return daily;
+}
+
 /// Computes daily returns from daily equity values.
 std::vector<double> daily_returns(const std::vector<double>& eq) {
     if (eq.size() < 2) return {};
@@ -100,12 +120,6 @@ double avg_drawdown(const std::vector<double>& eq) {
     return cnt > 0 ? sum / static_cast<double>(cnt) : 0.0;
 }
 
-/// Computes simple total return (last/first - 1).
-double simple_return(const std::vector<double>& eq) {
-    if (eq.size() < 2) return 0.0;
-    return (eq.back() - eq.front()) / eq.front();
-}
-
 /// Computes worst (most negative) drawdown per day from full-resolution equity curve.
 std::vector<double> daily_worst_drawdowns(const std::vector<EquityPoint>& curve) {
     if (curve.empty()) return {};
@@ -128,21 +142,28 @@ std::vector<double> daily_worst_drawdowns(const std::vector<EquityPoint>& curve)
     return result;
 }
 
-/// Computes geometric ADG with smoothed terminal (mean of last 3 daily equities).
-double smoothed_terminal_adg(const std::vector<double>& daily_eqs) {
-    if (daily_eqs.size() < 2) return 0.0;
-    double const start = daily_eqs[0];
-    if (start <= 0.0) return 0.0;
-    size_t const tail_len = std::min(size_t{3}, daily_eqs.size());
-    double sum = 0.0;
-    for (size_t i = daily_eqs.size() - tail_len; i < daily_eqs.size(); ++i) {
-        sum += daily_eqs[i];
+/// PassivBot-style smoothed terminal geometric gain & ADG.
+/// Applies EMA (alpha=0.5, span=3) to the daily equity series,
+/// then gain = smoothed_end / smoothed_start, adg = gain^(1/n_days) - 1.
+std::pair<double, double> smoothed_terminal_gain_and_adg(const std::vector<double>& daily_eqs) {
+    if (daily_eqs.size() < 2) return {0.0, 0.0};
+    if (daily_eqs[0] <= 0.0) return {0.0, 0.0};
+    double const alpha = 2.0 / (3.0 + 1.0); // span=3 => alpha=0.5
+    std::vector<double> smoothed;
+    smoothed.reserve(daily_eqs.size());
+    smoothed.push_back(daily_eqs[0]);
+    for (size_t i = 1; i < daily_eqs.size(); ++i) {
+        double const prev = smoothed.back();
+        double const cur = alpha * daily_eqs[i] + (1.0 - alpha) * prev;
+        smoothed.push_back(cur);
     }
-    double const end = sum / static_cast<double>(tail_len);
-    if (end <= 0.0) return 0.0;
+    double const start = smoothed[0];
+    double const end = smoothed.back();
+    if (end <= 0.0) return {0.0, 0.0};
     double const n_days = static_cast<double>(daily_eqs.size());
     double const gain = end / start;
-    return std::pow(gain, 1.0 / n_days) - 1.0;
+    double const adg = std::pow(gain, 1.0 / n_days) - 1.0;
+    return {gain, adg};
 }
 
 } // anonymous namespace
@@ -153,19 +174,27 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
     if (equity_curve.size() < 2) return m;
 
     auto const d_eq = daily_equity(equity_curve);
+    auto const d_min = daily_min_equity(equity_curve);
     auto const d_ret = daily_returns(d_eq);
+    auto const d_min_ret = daily_returns(d_min);
     double const n_days = static_cast<double>(d_ret.size());
     if (n_days < 1.0) return m;
 
     double const mean_ret = mean(d_ret);
     double const std_ret = stddev(d_ret);
     double const med_ret = median(d_ret);
+    double const std_ret_min = stddev(d_min_ret);
 
-    m.adg_usd = mean_ret;
+    // PassivBot-aligned: ADG from smoothed geometric gain
+    auto const [gain, adg] = smoothed_terminal_gain_and_adg(d_eq);
+    m.gain = gain;
+    m.adg_usd = adg;
+    m.adg_smoothed = adg; // same formula for backward compat
     m.mdg_usd = med_ret;
 
-    if (std_ret > 0.0) {
-        m.sharpe_ratio_usd = (mean_ret / std_ret) * std::sqrt(252.0);
+    // PassivBot-aligned: Sharpe = ADG / stddev(daily_min_pct_changes)
+    if (std_ret_min > 0.0) {
+        m.sharpe_ratio_usd = adg / std_ret_min;
     }
 
     double const dstd = downside_dev(d_ret);
@@ -173,12 +202,14 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
         m.sortino_ratio_usd = (mean_ret / dstd) * std::sqrt(252.0);
     }
 
-    double const total_ret = simple_return(d_eq);
-    double const cagr = std::pow(1.0 + total_ret, 252.0 / n_days) - 1.0;
-    double const cagr_clamped = std::max(-0.999, std::min(cagr, 100.0));
-
+    // Drawdown uses daily closing equities
     m.drawdown_worst = max_drawdown(d_eq);
-    if (m.drawdown_worst > 0.0) m.calmar_ratio_usd = cagr_clamped / m.drawdown_worst;
+
+    // PassivBot-aligned: Calmar = ADG / drawdown_worst
+    // Require minimum drawdown of 0.1% to avoid extreme ratios from flat equity curves
+    if (m.drawdown_worst > 0.001) {
+        m.calmar_ratio_usd = adg / m.drawdown_worst;
+    }
 
     // Drawdown worst mean 1%
     {
@@ -197,7 +228,7 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
     for (auto r : d_ret) { if (r > 0.0) sum_pos += r; else sum_neg += r; }
     if (sum_neg < 0.0) m.omega_ratio_usd = sum_pos / (-sum_neg);
 
-    // Gain / loss ratios
+    // Gain / loss ratios (tick-by-tick)
     double spa = 0.0, sna = 0.0;
     double spl = 0.0, snl = 0.0;
     double sps = 0.0, sns = 0.0;
@@ -248,8 +279,8 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
         }
         m.exponential_fit_error_usd = std::sqrt(sq_err / fn);
         if (m.exponential_fit_error_usd > 0.0) {
-            m.adg_per_exponential_fit_error_usd = m.adg_usd / m.exponential_fit_error_usd;
-            m.mdg_per_exponential_fit_error_usd = m.mdg_usd / m.exponential_fit_error_usd;
+            m.adg_per_exponential_fit_error_usd = adg / m.exponential_fit_error_usd;
+            m.mdg_per_exponential_fit_error_usd = med_ret / m.exponential_fit_error_usd;
         }
     }
 
@@ -386,11 +417,9 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
         }
         double const el = cnt_long > 0 ? exp_long / static_cast<double>(cnt_long) : 0.0;
         double const es = cnt_short > 0 ? exp_short / static_cast<double>(cnt_short) : 0.0;
-        if (el > 0.0) { m.adg_per_exposure_long_usd = mean_ret / el; m.mdg_per_exposure_long_usd = med_ret / el; m.gain_per_exposure_long_usd = m.gain_usd / el; }
-        if (es > 0.0) { m.adg_per_exposure_short_usd = mean_ret / es; m.mdg_per_exposure_short_usd = med_ret / es; m.gain_per_exposure_short_usd = m.gain_usd / es; }
+        if (el > 0.0) { m.adg_per_exposure_long_usd = adg / el; m.mdg_per_exposure_long_usd = med_ret / el; m.gain_per_exposure_long_usd = m.gain_usd / el; }
+        if (es > 0.0) { m.adg_per_exposure_short_usd = adg / es; m.mdg_per_exposure_short_usd = med_ret / es; m.gain_per_exposure_short_usd = m.gain_usd / es; }
     }
-
-    m.adg_smoothed = smoothed_terminal_adg(d_eq);
 
     // Entry initial balance %
     {
@@ -403,7 +432,7 @@ Metrics compute_metrics(const std::vector<EquityPoint>& equity_curve,
     }
 
     if (m.drawdown_worst_mean_1pct > 0.0) {
-        m.sterling_ratio = m.adg_smoothed / m.drawdown_worst_mean_1pct;
+        m.sterling_ratio = adg / m.drawdown_worst_mean_1pct;
     }
 
     return m;

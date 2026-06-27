@@ -31,6 +31,16 @@ void process_entries(const Config& strat, const SymbolInfo& info,
 
     double const slot_capital = (total_balance * strat.total_wallet_exposure)
                               / static_cast<double>(strat.strategy.n_positions);
+    double const wallet_exposure_limit = strat.total_wallet_exposure
+                                       / static_cast<double>(strat.strategy.n_positions);
+
+    // Check wallet_exposure limit before any entry (PassivBot-style)
+    double const current_we = total_balance > 0.0
+        ? std::abs(pos.total_qty * candle.close) / total_balance
+        : 0.0;
+    if (current_we >= wallet_exposure_limit * 0.999) {
+        return;
+    }
 
     if (std::abs(pos.total_qty) < 1e-12) {
         // First entry into this symbol
