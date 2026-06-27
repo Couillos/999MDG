@@ -308,3 +308,7 @@ __marimo__/
 .streamlit/secrets.toml
 /data
 results/
+
+# Backtests and optimization results
+backtests/
+optimize_results/
