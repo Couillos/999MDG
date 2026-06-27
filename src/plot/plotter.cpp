@@ -101,8 +101,9 @@ void Plotter::equity_chart() {
         + "\\nReturn: " + fmt_metric(tr) + "%"
         + "  |  Vol: " + fmt_metric(metrics_.volume_pct_per_day_avg);
 
-    cmd(gp, "set label 1 at graph 0.02, graph 0.98 leftfront \"%s\" tc rgb '%s' font ',9' boxed bs 1 borderc rgb '%s' fillcolor rgb '#1a1a2e'\n",
-        label_text.c_str(), plot::TEXT, plot::GRID);
+    cmd(gp, "set style textbox 1 lw 1 fc rgb '#1a1a2e'\n");
+    cmd(gp, "set label 1 at graph 0.02, graph 0.98 \"%s\" front tc rgb '%s' font ',9' boxed\n",
+        label_text.c_str(), plot::TEXT);
 
     cmd(gp, "plot '%s' every ::1 using ($1/1000):2 with lines lw 2 lc rgb '%s' title 'Equity', ", csv.c_str(), plot::EQUITY);
     cmd(gp, "'%s' every ::1 using ($1/1000):3 with lines lw 2 lc rgb '%s' title 'Balance'\n", csv.c_str(), plot::BALANCE);

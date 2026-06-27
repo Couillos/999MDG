@@ -169,7 +169,7 @@ static std::vector<LoadedCandles> split_candles(const LoadedCandles& loaded,
 }
 
 static void run_backtest(Config const& cfg) {
-    std::string const res_dir = create_results_dir(cfg.output.dir);
+    std::string const res_dir = create_results_dir("backtests");
     std::printf("Results dir: %s\n", res_dir.c_str());
 
     std::printf("Loading symbol info...\n");
@@ -285,17 +285,16 @@ static void apply_params_to_cfg(Config& cfg, const std::map<std::string, double>
     cfg.warmup_candles = (a > b) ? a : b;
 }
 
-/// Find the most recent pareto JSON in results/optimize/*/ and read the first entry's params.
+/// Find the most recent pareto JSON in optimize_results/*/ and read the first entry's params.
 /// Returns false if nothing found.
 static bool read_pareto_best(const std::string& base_path,
                              std::map<std::string, double>& out_params) {
     namespace fs = std::filesystem;
-    std::string const optimize_dir = base_path + "/optimize";
-    if (!fs::is_directory(optimize_dir)) return false;
+    if (!fs::is_directory(base_path)) return false;
 
     // Find most recent subdirectory by name (YYYY-MM-DD_HH-MM-SS)
     fs::path latest;
-    for (auto const& entry : fs::directory_iterator(optimize_dir)) {
+    for (auto const& entry : fs::directory_iterator(base_path)) {
         if (!entry.is_directory()) continue;
         if (latest.empty() || entry.path().filename() > latest.filename()) {
             latest = entry.path();
@@ -345,9 +344,9 @@ static bool read_pareto_best(const std::string& base_path,
 }
 
 static void run_optimize(Config const& cfg, bool backtest_best, bool show_tui) {
-    std::string const base = cfg.output.dir + "/optimize";
+    std::string const base = "optimize_results";
     std::string const res_dir = create_results_dir(base);
-    std::string const live_state = cfg.output.dir + "/optimize/.live_state";
+    std::string const live_state = "optimize_results/.live_state";
     std::printf("Results dir: %s\n", res_dir.c_str());
 
     std::printf("Loading symbol info...\n");
@@ -460,21 +459,18 @@ int main(int argc, char** argv) {
     // Check for standalone --tui or --backtest-best mode
     if (std::strcmp(argv[1], "--tui") == 0) {
         Config const cfg = load_config(config_path, Mode::OPTIMIZE);
-        std::string const live_state = cfg.output.dir + "/optimize/.live_state";
-        std::printf("Watching live state: %s\n", live_state.c_str());
-        run_watch_tui(live_state);
+        std::printf("Watching live state: optimize_results/.live_state\n");
+        run_watch_tui("optimize_results/.live_state");
         return 0;
     }
 
     if (std::strcmp(argv[1], "--backtest-best") == 0) {
         Config cfg = load_config(config_path, Mode::OPTIMIZE);
-        std::string const base = cfg.output.dir;
-
         std::map<std::string, double> best_params;
         // 1) Try most recent _pareto.json
-        if (!read_pareto_best(base, best_params)) {
+        if (!read_pareto_best("optimize_results", best_params)) {
             // 2) Try .live_state — pick entry with LOWEST constraint_violation
-            std::string const live_path = base + "/optimize/.live_state";
+            std::string const live_path = "optimize_results/.live_state";
             simdjson::padded_string j;
             if (!simdjson::padded_string::load(live_path).get(j)) {
                 simdjson::ondemand::parser p;
@@ -518,7 +514,7 @@ int main(int argc, char** argv) {
 
         apply_params_to_cfg(cfg, best_params);
 
-        std::string best_dir = base + "/optimize/best_from_live";
+        std::string best_dir = "optimize_results/best_from_live";
         std::error_code ec;
         std::filesystem::create_directories(best_dir, ec);
         backtest_and_report(cfg, best_dir);
