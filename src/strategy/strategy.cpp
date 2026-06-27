@@ -97,7 +97,10 @@ BacktestResult run_backtest(const Config& cfg,
     }
 
     BacktestResult result;
-    result.equity_curve.reserve(nc - ts);
+    // Fix for audit issue S1: guard against ts >= nc which would underflow
+    // the reserve() argument and throw std::length_error under -fno-exceptions.
+    size_t const reserve_count = (ts < nc) ? (nc - ts) : 0;
+    result.equity_curve.reserve(reserve_count);
     int total_positions = 0;
     double balance = cfg.initial_balance_usd;
 
@@ -111,6 +114,13 @@ BacktestResult run_backtest(const Config& cfg,
         std::vector<const Candle*> current_candles(n);
         for (size_t s = 0; s < n; ++s) {
             current_candles[s] = &per_symbol_candles[s].candles[i];
+        }
+
+        // Save entry timestamp at the START of the tick so we can detect
+        // close→reopen transitions within the same tick.
+        std::vector<int64_t> prev_entry_ts(n, 0);
+        for (size_t s = 0; s < n; ++s) {
+            prev_entry_ts[s] = positions[s].entry_timestamp_ms;
         }
 
         // Update iterative EMA
@@ -211,18 +221,33 @@ BacktestResult run_backtest(const Config& cfg,
             balance += positions[s].realized_pnl;
         }
 
-        // Track position entry/exit for position_held_hours (like PassivBot's fill-based approach)
+        // Track position entry/exit for position_held_hours (like PassivBot's fill-based approach).
+        // Uses prev_entry_ts (saved at start of tick) to correctly handle close→reopen
+        // within the same tick.
         for (size_t s = 0; s < n; ++s) {
             bool const now_open = positions[s].total_qty > 1e-12;
-            bool const was_open = positions[s].entry_timestamp_ms != 0;
-            if (now_open && !was_open) {
-                positions[s].entry_timestamp_ms = current_candles[s]->timestamp;
-            } else if (!now_open && was_open) {
-                double hrs = static_cast<double>(
-                    current_candles[s]->timestamp - positions[s].entry_timestamp_ms) / 3600000.0;
-                result.position_durations_hours.push_back(hrs);
-                positions[s].entry_timestamp_ms = 0;
+            int64_t const old_ts = prev_entry_ts[s];
+            int64_t const new_ts = positions[s].entry_timestamp_ms;
+
+            if (old_ts != 0) {
+                // Position was open at start of tick.
+                if (!now_open) {
+                    // Closed during this tick (close_grid / stop_loss / unstuck / crop).
+                    double const hrs = static_cast<double>(
+                        current_candles[s]->timestamp - old_ts) / 3600000.0;
+                    result.position_durations_hours.push_back(hrs);
+                    positions[s].entry_timestamp_ms = 0;
+                } else if (new_ts != old_ts) {
+                    // Closed AND reopened this tick (entry_grid set a new timestamp).
+                    double const hrs = static_cast<double>(
+                        current_candles[s]->timestamp - old_ts) / 3600000.0;
+                    result.position_durations_hours.push_back(hrs);
+                    // new_ts is already set by entry_grid — keep it.
+                }
+                // else: still open, unchanged.
             }
+            // else: was closed at start of tick. If now_open, entry_grid already
+            // set entry_timestamp_ms. Nothing to record.
         }
 
         // Record equity point

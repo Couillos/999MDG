@@ -4,12 +4,25 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <csignal>
 #include <numeric>
 #include <string>
 
 namespace martingale {
 
 namespace {
+
+/// Ensure SIGPIPE is ignored so that an early gnuplot exit does not kill
+/// the whole backtest process. Fix for audit issue Plot-4.
+struct SigpipeIgnore {
+    SigpipeIgnore() {
+        // SIG_IGN is portable; do not use signal() with multi-threaded programs.
+        std::signal(SIGPIPE, SIG_IGN);
+    }
+};
+
+SigpipeIgnore g_sigpipe_ignore{};
+
 std::string fmt_metric(double v) {
     char buf[32];
     if (v >= 1000.0 || v <= -1000.0) {
@@ -22,6 +35,56 @@ std::string fmt_metric(double v) {
         std::snprintf(buf, sizeof(buf), "%.8f", v);
     }
     return std::string(buf);
+}
+
+/// Formats a double using %.6g (6 significant digits, like Python's `:.6g`).
+/// This matches the format used in plot_balance_equity_jk2.py's metrics panel.
+std::string fmt_g6(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.6g", v);
+    return std::string(buf);
+}
+
+/// Builds the metrics panel text exactly as in plot_balance_equity_jk2.py's
+/// create_metrics_panel(): 22 metrics, one per line, format "key: value".
+/// Order matches the Python script.
+std::string build_metrics_panel_text(const Metrics& m, const std::vector<EquityPoint>& curve) {
+    // Cumulative return in % (computed from equity curve, like the Python script)
+    std::string cumret;
+    if (curve.size() >= 2 && curve.front().equity > 0.0) {
+        double const initial = curve.front().equity;
+        double const final_eq = curve.back().equity;
+        double const cr = (final_eq / initial - 1.0) * 100.0;
+        cumret = fmt_g6(cr) + "%";
+    } else {
+        cumret = "-";
+    }
+
+    std::string text;
+    text.reserve(1024);
+    text += "adg: " + fmt_g6(m.adg_usd) + "\n";
+    text += "mdg: " + fmt_g6(m.mdg_usd) + "\n";
+    text += "gain: " + fmt_g6(m.gain) + "\n";
+    text += "cumulative_return: " + cumret + "\n";
+    text += "drawdown_worst: " + fmt_g6(m.drawdown_worst) + "\n";
+    text += "drawdown_worst_mean_1pct: " + fmt_g6(m.drawdown_worst_mean_1pct) + "\n";
+    text += "loss_profit_ratio: " + fmt_g6(m.loss_profit_ratio_long) + "\n";
+    text += "sortino_ratio: " + fmt_g6(m.sortino_ratio_usd) + "\n";
+    text += "calmar_ratio: " + fmt_g6(m.calmar_ratio_usd) + "\n";
+    text += "sterling_ratio: " + fmt_g6(m.sterling_ratio) + "\n";
+    text += "sharpe_ratio: " + fmt_g6(m.sharpe_ratio_usd) + "\n";
+    text += "omega_ratio: " + fmt_g6(m.omega_ratio_usd) + "\n";
+    text += "equity_balance_diff_neg_max: " + fmt_g6(m.equity_balance_diff_neg_max_usd) + "\n";
+    text += "equity_balance_diff_neg_mean: " + fmt_g6(m.equity_balance_diff_neg_mean_usd) + "\n";
+    text += "equity_balance_diff_pos_max: " + fmt_g6(m.equity_balance_diff_pos_max_usd) + "\n";
+    text += "equity_balance_diff_pos_mean: " + fmt_g6(m.equity_balance_diff_pos_mean_usd) + "\n";
+    text += "position_held_hours_max: " + fmt_g6(m.position_held_hours_max) + "\n";
+    text += "position_held_hours_mean: " + fmt_g6(m.position_held_hours_mean) + "\n";
+    text += "position_held_hours_median: " + fmt_g6(m.position_held_hours_median) + "\n";
+    text += "position_unchanged_hours_max: " + fmt_g6(m.position_unchanged_hours_max) + "\n";
+    text += "positions_held_per_day: " + fmt_g6(m.positions_held_per_day) + "\n";
+    text += "peak_recovery_hours: " + fmt_g6(m.peak_recovery_hours_equity_usd);
+    return text;
 }
 } // anonymous namespace
 
@@ -87,23 +150,34 @@ void Plotter::equity_chart() {
     chart_preamble(gp, "equity_chart.png");
     cmd(gp, "set title textcolor rgb '%s' font ',14' \"Equity & Balance — %s\"\n", plot::TEXT, title().c_str());
 
-    // Metrics overlay label (inspired by plot_balance_equity_jk2.py create_metrics_panel)
-    double const tr = curve_.size() >= 2
-        ? (curve_.back().equity - curve_.front().equity) / curve_.front().equity * 100.0
-        : 0.0;
-    std::string const label_text =
-        "Sharpe: " + fmt_metric(metrics_.sharpe_ratio_usd)
-        + "  |  Calmar: " + fmt_metric(metrics_.calmar_ratio_usd)
-        + "\\nGain: " + fmt_metric(metrics_.gain)
-        + "  |  ADG: " + fmt_metric(metrics_.adg_usd)
-        + "\\nMDG: " + fmt_metric(metrics_.mdg_usd)
-        + "  |  DD: " + fmt_metric(metrics_.drawdown_worst)
-        + "\\nReturn: " + fmt_metric(tr) + "%"
-        + "  |  Vol: " + fmt_metric(metrics_.volume_pct_per_day_avg);
+    // Metrics panel — reproduces plot_balance_equity_jk2.py's create_metrics_panel():
+    // 22 metrics, one per line, format "key: value" with %.6g for floats.
+    // Placed at top-left, monospace font, semi-transparent dark blue background.
+    std::string const panel_text = build_metrics_panel_text(metrics_, curve_);
 
-    cmd(gp, "set style textbox 1 lw 1 fc rgb '#1a1a2e'\n");
-    cmd(gp, "set label 1 at graph 0.02, graph 0.98 \"%s\" front tc rgb '%s' font ',9' boxed\n",
-        label_text.c_str(), plot::TEXT);
+    // gnuplot uses \n (literal backslash-n) for newlines inside quoted strings.
+    // build_metrics_panel_text returns real newlines; convert them to \\n for gnuplot.
+    // Also escape underscores (_ → \_) because the terminal is "enhanced" and
+    // would otherwise interpret _ as a subscript marker (X_a → X with subscript a).
+    std::string gnuplot_text;
+    gnuplot_text.reserve(panel_text.size() * 2);
+    for (char c : panel_text) {
+        if (c == '\n') {
+            gnuplot_text += "\\n";
+        } else if (c == '"') {
+            gnuplot_text += "\\\"";
+        } else if (c == '_') {
+            gnuplot_text += "\\_";
+        } else {
+            gnuplot_text += c;
+        }
+    }
+
+    // Style: JK2-inspired dark blue panel with light blue border.
+    // font ',9' = 9pt; textcolor = plot::TEXT (light/white).
+    cmd(gp, "set style textbox 1 lw 1 fc rgb '#0a1a2a' border rgb '#2a5a8a'\n");
+    cmd(gp, "set label 1 at graph 0.015, graph 0.978 \"%s\" front tc rgb '%s' font ',9' boxed\n",
+        gnuplot_text.c_str(), plot::TEXT);
 
     cmd(gp, "plot '%s' every ::1 using ($1/1000):2 with lines lw 2 lc rgb '%s' title 'Equity', ", csv.c_str(), plot::EQUITY);
     cmd(gp, "'%s' every ::1 using ($1/1000):3 with lines lw 2 lc rgb '%s' title 'Balance'\n", csv.c_str(), plot::BALANCE);

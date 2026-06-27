@@ -82,7 +82,6 @@ StrategyParams parse_strategy(simdjson::ondemand::object strat) {
     sp.parkinson_volatility_span = static_cast<int>(req_u64(strat, "parkinson_volatility_span"));
     sp.maker_fee_pct            = req_f64(strat, "maker_fee_pct");
     sp.time_based_unstuck_pct      = opt_f64(strat, "time_based_unstuck_pct", 0.0);
-    sp.time_based_unstuck_threshold = opt_f64(strat, "time_based_unstuck_threshold", 0.0);
     sp.time_based_unstuck_age       = static_cast<int>(opt_f64(strat, "time_based_unstuck_age", 0.0));
     return sp;
 }
@@ -137,7 +136,8 @@ OptimizeConfig parse_optimize(simdjson::ondemand::object opt) {
                 if (sm.weight < 0) sm.weight = -sm.weight;
             } else {
                 // Backward compat: infer goal from weight sign
-                sm.goal = (sm.weight < 0) ? "max" : ((sm.weight > 0) ? "min" : "max");
+                // Convention: POSITIVE weight => MAXIMIZE, NEGATIVE weight => MINIMIZE
+                sm.goal = (sm.weight < 0) ? "min" : "max";
                 sm.weight = std::abs(sm.weight);
             }
             if (sm.weight == 0.0) sm.weight = 1.0;

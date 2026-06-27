@@ -15,6 +15,17 @@ namespace {
 /// Base URL for the Binance REST API.
 constexpr char BASE_URL[] = "https://api.binance.com";
 
+/// Global CURL initialization — must be called once before any curl_easy_init.
+/// Fix for audit issue D2: previously every BinanceClient instance called
+/// curl_easy_init() without curl_global_init(), which is thread-unsafe and
+/// UB when the optimizer spawns N worker threads that each create a client.
+struct CurlGlobalInit {
+    CurlGlobalInit()  { curl_global_init(CURL_GLOBAL_DEFAULT); }
+    ~CurlGlobalInit() { curl_global_cleanup(); }
+};
+
+CurlGlobalInit g_curl_init{};
+
 /// CURL write callback: appends received data to a std::string.
 size_t curl_write(void* ptr, size_t size, size_t nmemb, void* userdata) {
     auto* buf = static_cast<std::string*>(userdata);
@@ -88,15 +99,24 @@ std::optional<std::string> BinanceClient::http_get(const std::string& url) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "martingale/1.0");
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
 
     CURLcode res = curl_easy_perform(curl);
     long http_code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
     curl_easy_cleanup(curl);
 
-    if (res != CURLE_OK || http_code != 200) {
+    if (res != CURLE_OK) {
+        std::fprintf(stderr, "Warning: CURL error %d (%s) on %s\n",
+                     static_cast<int>(res), curl_easy_strerror(res), url.c_str());
+        return std::nullopt;
+    }
+    if (http_code != 200) {
+        std::fprintf(stderr, "Warning: HTTP %ld on %s\n", http_code, url.c_str());
         return std::nullopt;
     }
 

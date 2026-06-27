@@ -10,16 +10,31 @@ double round_step(double val, double step) {
     return std::round(val / step) * step;
 }
 
+/// Resets per-position entry state so the next entry starts fresh.
+/// NOTE: entry_timestamp_ms is NOT reset here — strategy.cpp's position
+/// tracking needs it to detect the open→closed transition and record
+/// the position duration. strategy.cpp resets it after recording.
+void reset_position_state(Position& pos) {
+    pos.entry_levels = 0;
+    pos.unstuck_levels = 0;
+    pos.entry_tick = 0;
+}
+
 } // anonymous namespace
 
 void process_closes(const Config& strat, const SymbolInfo& info,
                     const Candle& candle, Position& pos,
                     int& total_positions) {
-    if (pos.total_qty == 0.0) {
+    // BUG 11 FIX: use epsilon comparison instead of == 0.0.
+    if (std::abs(pos.total_qty) < 1e-12) {
         return;
     }
 
     for (int k = 1; k <= strat.strategy.close_grid_count; ++k) {
+        if (std::abs(pos.total_qty) < 1e-12) {
+            break;  // position fully closed, stop iterating
+        }
+
         double const target_price = pos.avg_entry_price
             * (1.0 + static_cast<double>(k) * strat.strategy.close_grid_spacing_pct);
 
@@ -44,14 +59,17 @@ void process_closes(const Config& strat, const SymbolInfo& info,
         pos.traded_qty += close_qty;
     }
 
-    // Guard against floating-point residuals that prevent position tracking
+    // Guard against floating-point residuals
     if (std::abs(pos.total_qty) < 1e-12) {
         pos.total_qty = 0.0;
     }
 
-    // If position fully closed via grid, decrement total_positions
-    if (pos.total_qty <= 0.0 && total_positions > 0) {
-        total_positions -= 1;
+    // If position fully closed via grid, reset state and decrement total_positions.
+    if (pos.total_qty <= 0.0) {
+        reset_position_state(pos);
+        if (total_positions > 0) {
+            total_positions -= 1;
+        }
     }
 }
 

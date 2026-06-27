@@ -176,8 +176,18 @@ std::optional<std::vector<Candle>> read_daily_file(const std::string& path) {
         return std::vector<Candle>{};
     }
 
+    // Fix for audit issue D3: validate count against raw_size to prevent
+    // heap over-read on truncated/corrupt files.
     auto const col_ts = static_cast<size_t>(count) * sizeof(int64_t);
     auto const col_dbl = static_cast<size_t>(count) * sizeof(double);
+    size_t const expected = sizeof(uint32_t) + col_ts + 5 * col_dbl;
+    if (expected > raw_size) {
+        std::fprintf(stderr, "Warning: corrupt daily file %s (count=%u, expected=%llu, raw=%llu)\n",
+                     path.c_str(), count,
+                     static_cast<unsigned long long>(expected),
+                     static_cast<unsigned long long>(raw_size));
+        return std::nullopt;
+    }
 
     auto const ts_off = off; off += col_ts;
     auto const op_off = off; off += col_dbl;

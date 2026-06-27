@@ -166,14 +166,16 @@ TEST(MetricsTest, AdgSmoothed) {
     // d_eq = [10000, 10010, ..., 10090]
     // PassivBot formula: EMA(alpha=0.5) over full series
     // smoothed[0] = 10000, ..., smoothed[9] = 10080.01953125
-    // gain = 10080.01953125/10000, adg = gain^(1/10) - 1
+    // gain = 10080.01953125/10000
+    // adg = gain^(1/n_intervals) - 1, where n_intervals = n_points - 1 = 9
+    // (Fix for audit issue M2: previously used n_points=10, off-by-one)
     double expected = 10000.0;
     double const alpha = 2.0 / 4.0; // span=3
     for (int i = 10010; i <= 10090; i += 10) {
         expected = alpha * static_cast<double>(i) + (1.0 - alpha) * expected;
     }
     double const gain = expected / 10000.0;
-    expected = std::pow(gain, 1.0 / 10.0) - 1.0;
+    expected = std::pow(gain, 1.0 / 9.0) - 1.0;
     EXPECT_NEAR(m.adg_smoothed, expected, 1e-15);
 
     // No drawdown means drawdown_worst_mean_1pct stays 0
@@ -214,10 +216,11 @@ TEST(MetricsTest, SterlingRatio) {
 
     // d_eq = [10000 (x150), 8000 (x50)]
     // tail_len = 3, end = 8000, start = 10000
-    // adg_smoothed = (8000/10000)^(1/200) - 1
+    // adg_smoothed = (8000/10000)^(1/n_intervals) - 1, n_intervals = 199 (n_points-1)
+    // (Fix for audit issue M2: previously used 200, off-by-one)
     // drawdown_worst_mean_1pct = 0.20
     // sterling_ratio = adg_smoothed / 0.20
-    double const expected_adg = std::pow(8000.0 / 10000.0, 1.0 / 200.0) - 1.0;
+    double const expected_adg = std::pow(8000.0 / 10000.0, 1.0 / 199.0) - 1.0;
     double const expected_sr = expected_adg / 0.20;
     EXPECT_NEAR(m.sterling_ratio, expected_sr, 1e-15);
 }

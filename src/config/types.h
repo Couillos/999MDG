@@ -28,7 +28,6 @@ struct StrategyParams {
     int parkinson_volatility_span;
     double maker_fee_pct;
     double time_based_unstuck_pct;
-    double time_based_unstuck_threshold;
     int time_based_unstuck_age;
 };
 

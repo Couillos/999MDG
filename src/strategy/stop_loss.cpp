@@ -22,7 +22,15 @@ bool check_stop_loss(const Config& strat, const Candle& candle, Position& pos) {
     pos.realized_pnl += pos.total_qty * (candle.close - pos.avg_entry_price) - fee;
     pos.traded_qty += pos.total_qty;
     pos.total_qty = 0.0;
+
+    // Reset entry state for the next position.
+    // NOTE: entry_timestamp_ms is NOT reset here — strategy.cpp's position
+    // tracking needs it to record the duration. strategy.cpp resets it.
+    // Fixes BUG 5: previously only entry_levels was reset, leaving
+    // unstuck_levels stale for the next position.
     pos.entry_levels = 0;
+    pos.unstuck_levels = 0;
+    pos.entry_tick = 0;
 
     return true;
 }

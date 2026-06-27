@@ -127,8 +127,6 @@ void apply_param_to_cfg(Config& cfg, const std::string& name, double value) {
         cfg.total_wallet_exposure = value;
     } else if (name == "time_based_unstuck_pct") {
         cfg.strategy.time_based_unstuck_pct = value;
-    } else if (name == "time_based_unstuck_threshold") {
-        cfg.strategy.time_based_unstuck_threshold = value;
     } else if (name == "time_based_unstuck_age") {
         cfg.strategy.time_based_unstuck_age = static_cast<int>(value);
     }
@@ -228,9 +226,12 @@ Config make_config_from_genes(const Config& base,
     for (size_t i = 0; i < genes.size(); ++i) {
         apply_param_to_cfg(cfg, axes[i].name, genes[i]);
     }
-    int const a = cfg.strategy.entry_ema_period;
-    int const b = cfg.strategy.parkinson_volatility_span;
-    cfg.warmup_candles = (a > b) ? a : b;
+    // IMPORTANT: use base.warmup_candles (= max_warmup from bounds) so that
+    // the backtest's trading start matches the data loading's warmup.
+    // If we used max(ema_period, parkinson_span) here, the trading start
+    // would differ from the data loading warmup, causing the equity curve
+    // to differ between optimizer and final backtest.
+    cfg.warmup_candles = base.warmup_candles;
     return cfg;
 }
 

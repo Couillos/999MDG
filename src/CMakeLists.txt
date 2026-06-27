@@ -24,20 +24,28 @@ add_library(martingale_lib STATIC
 
 target_link_libraries(martingale_lib PUBLIC
     simdjson::simdjson
-    CURL::libcurl
+    PkgConfig::CURL
     zstd::libzstd_static
-    ncurses
+    ${CURSES_LIBRARIES}
 )
 
-target_include_directories(martingale_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(martingale_lib PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CURSES_INCLUDE_DIRS}
+)
+
+# Apply strict warn flags to the library (was previously only on the exe — audit issue #2)
+target_compile_options(martingale_lib PUBLIC
+    ${MARTINGALE_WARN_FLAGS}
+)
+
+# Strict flags (no-rtti, no-exceptions) applied as PRIVATE so tests can override
+target_compile_options(martingale_lib PRIVATE
+    ${MARTINGALE_STRICT_FLAGS}
+)
 
 add_executable(martingale
     main.cpp
-)
-
-target_compile_options(martingale PRIVATE
-    ${MARTINGALE_WARN_FLAGS}
-    ${MARTINGALE_STRICT_FLAGS}
 )
 
 target_link_libraries(martingale PRIVATE

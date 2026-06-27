@@ -217,7 +217,6 @@ TEST(UnstuckTest, DisabledWhenParamsZero) {
     // All params 0 => unstuck disabled
     Config cfg = make_cfg();
     cfg.strategy.time_based_unstuck_pct = 0.0;
-    cfg.strategy.time_based_unstuck_threshold = 0.0;
     cfg.strategy.time_based_unstuck_age = 0;
 
     Candle candle{0, 100.0, 101.0, 99.0, 100.0, 1000.0};
@@ -227,13 +226,12 @@ TEST(UnstuckTest, DisabledWhenParamsZero) {
     pos.entry_tick = 10;
 
     bool result = check_time_based_unstuck(cfg, candle, pos, 100);
-    EXPECT_FALSE(result) << "Should be disabled when pct=0, threshold=0, age=0";
+    EXPECT_FALSE(result) << "Should be disabled when pct=0 and age=0";
 }
 
 TEST(UnstuckTest, DisabledWhenPctZero) {
     Config cfg = make_cfg();
     cfg.strategy.time_based_unstuck_pct = 0.0;
-    cfg.strategy.time_based_unstuck_threshold = 0.03;
     cfg.strategy.time_based_unstuck_age = 24;
     cfg.strategy.maker_fee_pct = 0.001;
 
@@ -244,13 +242,12 @@ TEST(UnstuckTest, DisabledWhenPctZero) {
     pos.entry_tick = 10;
 
     bool result = check_time_based_unstuck(cfg, candle, pos, 100);
-    EXPECT_FALSE(result) << "Should be disabled when pct=0 even if age>0 and upnl>threshold";
+    EXPECT_FALSE(result) << "Should be disabled when pct=0 even if age>0";
 }
 
 TEST(UnstuckTest, DisabledWhenAgeZero) {
     Config cfg = make_cfg();
     cfg.strategy.time_based_unstuck_pct = 0.1;
-    cfg.strategy.time_based_unstuck_threshold = 0.03;
     cfg.strategy.time_based_unstuck_age = 0;
     cfg.strategy.maker_fee_pct = 0.001;
 
@@ -261,67 +258,47 @@ TEST(UnstuckTest, DisabledWhenAgeZero) {
     pos.entry_tick = 10;
 
     bool result = check_time_based_unstuck(cfg, candle, pos, 100);
-    EXPECT_FALSE(result) << "Should be disabled when age=0 even if pct>0 and upnl>threshold";
+    EXPECT_FALSE(result) << "Should be disabled when age=0 even if pct>0";
 }
 
 TEST(UnstuckTest, DoesNotTriggerBeforeAge) {
     Config cfg = make_cfg();
     cfg.strategy.time_based_unstuck_pct = 0.1;
-    cfg.strategy.time_based_unstuck_threshold = 0.03;
     cfg.strategy.time_based_unstuck_age = 50;
     cfg.strategy.maker_fee_pct = 0.001;
 
-    Candle candle{0, 100.0, 101.0, 99.0, 110.0, 1000.0};
+    // entry_timestamp_ms = 10 hours; candle.timestamp = 50 hours; age = 50 hours
+    // held = 50 - 10 = 40 hours < age=50 => should not trigger
+    Candle candle{50 * 3600000LL, 100.0, 101.0, 99.0, 110.0, 1000.0};
     Position pos;
     pos.total_qty = 1.0;
     pos.avg_entry_price = 90.0;
     pos.entry_tick = 10;
+    pos.entry_timestamp_ms = 10 * 3600000LL;
 
-    // current_tick - entry_tick = 40 < age=50
     bool result = check_time_based_unstuck(cfg, candle, pos, 50);
     EXPECT_FALSE(result) << "Should not trigger before age is reached";
-}
-
-TEST(UnstuckTest, DoesNotTriggerWhenExposureBelowThreshold) {
-    Config cfg = make_cfg();
-    cfg.strategy.time_based_unstuck_pct = 0.1;
-    cfg.strategy.time_based_unstuck_threshold = 0.05;
-    cfg.strategy.time_based_unstuck_age = 20;
-    cfg.strategy.maker_fee_pct = 0.001;
-    cfg.initial_balance_usd = 10000.0;
-
-    // qty=1, close=91, balance=10000 => exposure = 1*91/10000 = 0.0091
-    // threshold=0.05 => exposure (0.0091) <= threshold (0.05) => skip
-    Candle candle{0, 100.0, 101.0, 99.0, 91.0, 1000.0};
-    Position pos;
-    pos.total_qty = 1.0;
-    pos.avg_entry_price = 90.0;
-    pos.entry_tick = 10;
-
-    bool result = check_time_based_unstuck(cfg, candle, pos, 100);
-    EXPECT_FALSE(result) << "Should not trigger when position exposure is below threshold";
 }
 
 TEST(UnstuckTest, TriggersFirstLevel) {
     Config cfg = make_cfg();
     cfg.strategy.time_based_unstuck_pct = 0.02;
-    cfg.strategy.time_based_unstuck_threshold = 0.03;
     cfg.strategy.time_based_unstuck_age = 24;
     cfg.strategy.maker_fee_pct = 0.001;
     cfg.initial_balance_usd = 10000.0;
-    cfg.total_wallet_exposure = 1.0; // wel=1.0, wel*threshold=0.03
+    cfg.total_wallet_exposure = 1.0;
 
     // qty=5.0, close=100, balance=10000 => exposure = 5*100/10000 = 0.05
-    // wel*threshold = 1.0*0.03 = 0.03 => 0.05 >= 0.03 => triggers
     // close_qty = 0.02*10000/100 = 2.0 per level (exposure tranche)
     // min(2.0, 5.0) = 2.0 => close 2.0, qty goes 5.0->3.0
-    Candle candle{0, 100.0, 101.0, 99.0, 100.0, 1000.0};
+    Candle candle{50 * 3600000LL, 100.0, 101.0, 99.0, 100.0, 1000.0};
     Position pos;
     pos.total_qty = 5.0;
     pos.avg_entry_price = 90.0;
     pos.entry_tick = 10;
+    pos.entry_timestamp_ms = 10 * 3600000LL;
 
-    // held = 50 - 10 = 40 > age=24
+    // held = 50 - 10 = 40 hours > age=24 hours
     // expected = 40/24 = 1 level
     bool result = check_time_based_unstuck(cfg, candle, pos, 50);
     EXPECT_TRUE(result) << "Should trigger for first level";
@@ -334,24 +311,23 @@ TEST(UnstuckTest, TriggersFirstLevel) {
 TEST(UnstuckTest, TriggersOnNegativePnl) {
     Config cfg = make_cfg();
     cfg.strategy.time_based_unstuck_pct = 0.02;
-    cfg.strategy.time_based_unstuck_threshold = 0.03;
     cfg.strategy.time_based_unstuck_age = 24;
     cfg.strategy.maker_fee_pct = 0.001;
     cfg.initial_balance_usd = 10000.0;
     cfg.total_wallet_exposure = 1.0;
 
     // qty=5.0, close=85, balance=10000 => exposure = 5*85/10000 = 0.0425
-    // wel*threshold = 1.0*0.03 = 0.03 => 0.0425 >= 0.03 => triggers
     // close_qty = 0.02*10000/85 ≈ 2.35 per level
     // min(2.35, 5.0) = 2.35 => close 2.35, qty goes 5.0->2.65
-    Candle candle{0, 100.0, 101.0, 99.0, 85.0, 1000.0};
+    Candle candle{50 * 3600000LL, 100.0, 101.0, 99.0, 85.0, 1000.0};
     Position pos;
     pos.total_qty = 5.0;
     pos.avg_entry_price = 90.0;
     pos.entry_tick = 10;
+    pos.entry_timestamp_ms = 10 * 3600000LL;
 
     bool result = check_time_based_unstuck(cfg, candle, pos, 50);
-    EXPECT_TRUE(result) << "Should trigger even with negative PnL if exposure exceeds threshold";
+    EXPECT_TRUE(result) << "Should trigger even with negative PnL";
     EXPECT_NEAR(pos.total_qty, 2.6470588235, 1e-6)
         << "Should close one exposure tranche";
     EXPECT_EQ(pos.unstuck_levels, 1) << "Should record 1 unstuck level";
@@ -361,25 +337,24 @@ TEST(UnstuckTest, TriggersOnNegativePnl) {
 TEST(UnstuckTest, TriggersMultipleLevels) {
     Config cfg = make_cfg();
     cfg.strategy.time_based_unstuck_pct = 0.01;
-    cfg.strategy.time_based_unstuck_threshold = 0.03;
     cfg.strategy.time_based_unstuck_age = 24;
     cfg.strategy.maker_fee_pct = 0.001;
     cfg.initial_balance_usd = 10000.0;
     cfg.total_wallet_exposure = 1.0;
 
     // qty=4.0, close=100, balance=10000 => exposure = 4*100/10000 = 0.04
-    // wel*threshold = 1.0*0.03 = 0.03 => 0.04 >= 0.03 => triggers
     // close_qty = 0.01*10000/100 = 1.0 per level (fixed exposure tranche)
     // Level 0: close 1.0, qty=3.0
     // Level 1: close 1.0, qty=2.0
     // Level 2: close 1.0, qty=1.0
-    Candle candle{0, 100.0, 101.0, 99.0, 100.0, 1000.0};
+    Candle candle{100 * 3600000LL, 100.0, 101.0, 99.0, 100.0, 1000.0};
     Position pos;
     pos.total_qty = 4.0;
     pos.avg_entry_price = 90.0;
     pos.entry_tick = 10;
+    pos.entry_timestamp_ms = 10 * 3600000LL;
 
-    // held = 100 - 10 = 90
+    // held = 100 - 10 = 90 hours
     // expected = 90/24 = 3 levels (integer division)
     bool result = check_time_based_unstuck(cfg, candle, pos, 100);
     EXPECT_TRUE(result) << "Should trigger for 3 levels";
@@ -391,24 +366,23 @@ TEST(UnstuckTest, TriggersMultipleLevels) {
 TEST(UnstuckTest, ClosesFullPositionWhenTrancheExceedsQty) {
     Config cfg = make_cfg();
     cfg.strategy.time_based_unstuck_pct = 0.03;
-    cfg.strategy.time_based_unstuck_threshold = 0.03;
     cfg.strategy.time_based_unstuck_age = 10;
     cfg.strategy.maker_fee_pct = 0.001;
     cfg.initial_balance_usd = 10000.0;
     cfg.total_wallet_exposure = 1.0;
 
-    // qty=4.0, close=100 => exposure=0.04, wel*threshold=1.0*0.03=0.03 => 0.04>=0.03 ✓
-    // close_qty = 0.03*10000/100 = 3.0 per level
+    // qty=4.0, close=100 => exposure=0.04
     // close_qty = 0.03*10000/100 = 3.0 per level
     // min(3.0, 4.0) = 3.0, qty goes 4.0->1.0 (partial close)
     // Level 1: min(3.0, 1.0) = 1.0, qty=0.0 (full close since tranche exceeds remaining)
-    Candle candle{0, 100.0, 101.0, 99.0, 100.0, 1000.0};
+    Candle candle{50 * 3600000LL, 100.0, 101.0, 99.0, 100.0, 1000.0};
     Position pos;
     pos.total_qty = 4.0;
     pos.avg_entry_price = 90.0;
     pos.entry_tick = 10;
+    pos.entry_timestamp_ms = 10 * 3600000LL;
 
-    // held = 50 - 10 = 40, age=10 => expected = 4
+    // held = 50 - 10 = 40 hours, age=10 hours => expected = 4
     // But after 2 levels, position is fully closed (4.0 -> 1.0 -> 0.0)
     bool result = check_time_based_unstuck(cfg, candle, pos, 50);
     EXPECT_TRUE(result) << "Should trigger and fully close when tranche exceeds remaining";
@@ -427,8 +401,7 @@ TEST(UnstuckIntegrationTest, FullBacktestWithUnstuck) {
     cfg.warmup_candles = 3;
 
     // Enable time-based unstuck
-    cfg.strategy.time_based_unstuck_pct = 0.1;
-    cfg.strategy.time_based_unstuck_threshold = 0.01;
+    cfg.strategy.time_based_unstuck_pct = 0.02;  // small tranche = partial closes
     cfg.strategy.time_based_unstuck_age = 5;
     cfg.strategy.maker_fee_pct = 0.001;
 
@@ -441,18 +414,20 @@ TEST(UnstuckIntegrationTest, FullBacktestWithUnstuck) {
     auto result = run_backtest(cfg, per_symbol, infos, "");
     ASSERT_GT(result.equity_curve.size(), 0U);
 
+    // With close_grid disabled and unstuck enabled, positions should be closed
+    // by the unstuck mechanism. Check that we have position durations recorded
+    // (meaning positions were opened AND closed during the backtest).
+    EXPECT_GT(result.position_durations_hours.size(), 0U)
+        << "Expected positions to be closed by unstuck";
+
     // In an uptrend with unstuck, we should have some realized PnL from partial closes
     double total_realized = 0.0;
-    int unstuck_positions = 0;
     for (const auto& pos : result.final_positions) {
         total_realized += pos.realized_pnl;
-        if (pos.unstuck_levels > 0) ++unstuck_positions;
     }
 
-    EXPECT_GT(unstuck_positions, 0)
-        << "Expected at least one position to have unstuck triggers";
     EXPECT_GT(total_realized, 0.0)
-        << "Expected positive realized PnL from unstuck partial closes";
+        << "Expected positive realized PnL from unstuck closes in uptrend";
 
     // Final equity should be above initial since unstuck captures profits
     double const final_eq = result.equity_curve.back().equity;
@@ -481,7 +456,6 @@ TEST(UnstuckIntegrationTest, UnstuckVsNoUnstuck) {
     // Run WITH unstuck
     auto cfg_with = cfg_base;
     cfg_with.strategy.time_based_unstuck_pct = 0.1;
-    cfg_with.strategy.time_based_unstuck_threshold = 0.01;
     cfg_with.strategy.time_based_unstuck_age = 5;
     cfg_with.strategy.maker_fee_pct = 0.001;
 
@@ -509,7 +483,6 @@ TEST(UnstuckIntegrationTest, ExposureDropsToZeroBetweenCycles) {
     cfg.warmup_candles = 3;
 
     cfg.strategy.time_based_unstuck_pct = 0.3;
-    cfg.strategy.time_based_unstuck_threshold = 0.01;
     cfg.strategy.time_based_unstuck_age = 3;
     cfg.strategy.maker_fee_pct = 0.001;
 

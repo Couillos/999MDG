@@ -167,10 +167,12 @@ CacheResult& CacheResult::operator=(CacheResult&& other) noexcept {
 
 std::string make_cache_hash(const Config& cfg) {
     std::string input;
-    // Sort symbols for deterministic hash
-    auto symbols = cfg.symbols;
-    std::sort(symbols.begin(), symbols.end());
-    for (const auto& s : symbols) {
+    // Fix for audit issue D1: do NOT sort symbols — load_candles concatenates
+    // per-symbol candle vectors in cfg.symbols order, and split_candles relies
+    // on that exact order. Sorting here would cause two configs with permuted
+    // symbol lists to share a cache key while expecting different per-symbol
+    // layouts, silently corrupting the backtest.
+    for (const auto& s : cfg.symbols) {
         input += s;
         input += ',';
     }
@@ -213,13 +215,21 @@ std::optional<CacheResult> try_load_cache(const std::string& hash) {
 
     auto* header = static_cast<const CacheHeader*>(mapped);
     if (header->magic != 0x43414e44 || header->version != 1) {
+        ::munmap(mapped, file_size);
+        ::close(fd);
         return std::nullopt;
     }
 
     result.trading_start_idx = static_cast<size_t>(header->trading_start_idx);
     auto count = static_cast<size_t>(header->count);
 
-    if (sizeof(CacheHeader) + count * sizeof(Candle) > file_size) {
+    // Fix for audit issues D3/D4: validate count to prevent buffer over-read
+    // and integer overflow. count * sizeof(Candle) must fit in file_size.
+    if (count > (file_size - sizeof(CacheHeader)) / sizeof(Candle)) {
+        std::fprintf(stderr, "Warning: cache file %s has corrupt count=%zu\n",
+                     path.c_str(), count);
+        ::munmap(mapped, file_size);
+        ::close(fd);
         return std::nullopt;
     }
 

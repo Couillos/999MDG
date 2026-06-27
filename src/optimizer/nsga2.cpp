@@ -246,7 +246,13 @@ std::vector<Individual> select_next_generation(
     size_t n)
 {
     if (combined.empty() || n == 0) return {};
-    if (n >= combined.size()) return combined;
+
+    // NOTE: do NOT early-return when n >= combined.size(): we still need to
+    // compute ranks and crowding distances so that subsequent tournament
+    // selection works correctly. (Audit issue O2: the previous early-return
+    // left the initial population with rank=0, crowding=0 for ALL individuals,
+    // making tournament_select effectively random for the entire first
+    // generation.)
 
     std::vector<std::vector<double>> objectives(combined.size());
     for (size_t i = 0; i < combined.size(); ++i) {
@@ -259,8 +265,12 @@ std::vector<Individual> select_next_generation(
     for (int r : ranks) {
         if (r > max_rank) max_rank = r;
     }
+    if (max_rank <= 0) {
+        // No feasible front — return combined as-is with default rank/crowding
+        return combined;
+    }
 
-    std::vector<std::vector<size_t>> fronts(max_rank);
+    std::vector<std::vector<size_t>> fronts(static_cast<size_t>(max_rank));
     for (size_t i = 0; i < ranks.size(); ++i) {
         if (ranks[i] > 0) {
             fronts[static_cast<size_t>(ranks[i] - 1)].push_back(i);

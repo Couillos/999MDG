@@ -64,19 +64,23 @@ double mean(const std::vector<double>& v) {
 }
 
 /// Computes median of a vector (modifies order).
+/// Fix for audit issue M1: the previous implementation called std::nth_element
+/// twice with overlapping ranges, which invalidated the first call's result.
+/// For even-length vectors the (n/2-1)-th and (n/2)-th order statistics must
+/// be computed together via a single partial sort.
 double median(std::vector<double> v) {
     if (v.empty()) return 0.0;
     size_t const n = v.size();
     if (n % 2 == 1) {
-        auto mid = v.begin() + n / 2;
+        auto mid = v.begin() + static_cast<ptrdiff_t>(n / 2);
         std::nth_element(v.begin(), mid, v.end());
         return *mid;
     }
-    auto mid1 = v.begin() + n / 2 - 1;
-    auto mid2 = v.begin() + n / 2;
-    std::nth_element(v.begin(), mid1, v.end());
-    std::nth_element(v.begin(), mid2, v.end());
-    return (*mid1 + *mid2) / 2.0;
+    // Even length: need average of two middle order statistics.
+    // Use std::sort to guarantee both are correctly placed (n is typically small
+    // for daily returns / position durations).
+    std::sort(v.begin(), v.end());
+    return (v[n / 2 - 1] + v[n / 2]) / 2.0;
 }
 
 /// Computes population standard deviation.
@@ -110,7 +114,8 @@ double max_drawdown(const std::vector<double>& eq) {
 }
 
 /// Computes average drawdown (daily average of peak-to-current drawdown).
-double avg_drawdown(const std::vector<double>& eq) {
+// (Currently unused — kept for future use. Marked [[maybe_unused]] to silence -Wunused-function.)
+[[maybe_unused]] double avg_drawdown(const std::vector<double>& eq) {
     if (eq.size() < 2) return 0.0;
     double peak = eq[0], sum = 0.0; size_t cnt = 0;
     for (size_t i = 1; i < eq.size(); ++i) {
@@ -145,6 +150,8 @@ std::vector<double> daily_worst_drawdowns(const std::vector<EquityPoint>& curve)
 /// PassivBot-style smoothed terminal geometric gain & ADG.
 /// Applies EMA (alpha=0.5, span=3) to the daily equity series,
 /// then gain = smoothed_end / smoothed_start, adg = gain^(1/n_days) - 1.
+/// Fix for audit issue M2: use (n_days - 1) intervals, not n_days points,
+/// for the geometric mean — a 30-day series has 29 daily intervals, not 30.
 std::pair<double, double> smoothed_terminal_gain_and_adg(const std::vector<double>& daily_eqs) {
     if (daily_eqs.size() < 2) return {0.0, 0.0};
     if (daily_eqs[0] <= 0.0) return {0.0, 0.0};
@@ -160,9 +167,10 @@ std::pair<double, double> smoothed_terminal_gain_and_adg(const std::vector<doubl
     double const start = smoothed[0];
     double const end = smoothed.back();
     if (end <= 0.0) return {0.0, 0.0};
-    double const n_days = static_cast<double>(daily_eqs.size());
+    // Number of intervals = number of points - 1
+    double const n_intervals = static_cast<double>(daily_eqs.size() - 1);
     double const gain = end / start;
-    double const adg = std::pow(gain, 1.0 / n_days) - 1.0;
+    double const adg = std::pow(gain, 1.0 / n_intervals) - 1.0;
     return {gain, adg};
 }
 
@@ -182,7 +190,6 @@ Metrics compute_metrics(const BacktestResult& result,
     if (n_days < 1.0) return m;
 
     double const mean_ret = mean(d_ret);
-    double const std_ret = stddev(d_ret);
     double const med_ret = median(d_ret);
     double const std_ret_min = stddev(d_min_ret);
 
@@ -325,18 +332,52 @@ Metrics compute_metrics(const BacktestResult& result,
         m.equity_balance_diff_pos_mean_usd = pos_cnt > 0 ? pos_sum / pos_cnt : 0.0;
     }
 
-    // Peak recovery hours
+    // Peak recovery hours: maximum time for equity to recover from a drawdown
+    // back to its previous peak. Fixes audit issue M9: the previous logic only
+    // recorded recoveries to 99.9% of peak AND reset the measurement on every
+    // new peak, missing ongoing/unrecovered drawdowns entirely.
     {
-        double peak = equity_curve[0].equity, max_rh = 0.0;
-        size_t peak_idx = 0;
+        double peak = equity_curve[0].equity;
+        int64_t peak_ts = equity_curve[0].timestamp;
+        double max_rh = 0.0;
+        bool in_drawdown = false;
+        constexpr double recover_threshold = 0.999;  // 99.9% of peak = recovered
+
         for (size_t i = 1; i < equity_curve.size(); ++i) {
-            if (equity_curve[i].equity > peak) {
-                peak = equity_curve[i].equity; peak_idx = i;
-            } else if (equity_curve[i].equity >= peak * 0.999) {
-                double const hrs = static_cast<double>(equity_curve[i].timestamp - equity_curve[peak_idx].timestamp) / 3600000.0;
+            double const eq = equity_curve[i].equity;
+            int64_t const ts = equity_curve[i].timestamp;
+
+            if (eq > peak) {
+                // New peak — if we were in a drawdown, we just recovered.
+                if (in_drawdown) {
+                    double const hrs = static_cast<double>(ts - peak_ts) / 3600000.0;
+                    if (hrs > max_rh) max_rh = hrs;
+                    in_drawdown = false;
+                }
+                peak = eq;
+                peak_ts = ts;
+            } else if (eq < peak * recover_threshold) {
+                // We're in a drawdown (more than 0.1% below peak).
+                if (!in_drawdown) {
+                    in_drawdown = true;
+                    // peak_ts already set to when the peak occurred.
+                }
+            } else if (in_drawdown && eq >= peak * recover_threshold) {
+                // Recovered to within 0.1% of peak.
+                double const hrs = static_cast<double>(ts - peak_ts) / 3600000.0;
                 if (hrs > max_rh) max_rh = hrs;
+                in_drawdown = false;
+                // Don't update peak_ts — the peak is still the same.
             }
         }
+
+        // If still in drawdown at end of backtest, count the ongoing recovery time.
+        if (in_drawdown) {
+            double const hrs = static_cast<double>(
+                equity_curve.back().timestamp - peak_ts) / 3600000.0;
+            if (hrs > max_rh) max_rh = hrs;
+        }
+
         m.peak_recovery_hours_equity_usd = max_rh;
     }
 

@@ -25,7 +25,6 @@ std::string param_abbrev(const std::string& name) {
         if (name == "parkinson_volatility_span") return "pvol";
         if (name == "maker_fee_pct") return "mfee";
         if (name == "time_based_unstuck_pct") return "tup";
-        if (name == "time_based_unstuck_threshold") return "tut";
         if (name == "time_based_unstuck_age") return "tua";
         if (name == "total_wallet_exposure") return "twle";
         return "";

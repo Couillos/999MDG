@@ -90,7 +90,6 @@ static void write_analysis_json(const std::string& path, const Metrics& m,
     std::fprintf(f, "      \"parkinson_volatility_span\": %d,\n", cfg.strategy.parkinson_volatility_span);
     std::fprintf(f, "      \"maker_fee_pct\": %.6f,\n", cfg.strategy.maker_fee_pct);
     std::fprintf(f, "      \"time_based_unstuck_pct\": %.4f,\n", cfg.strategy.time_based_unstuck_pct);
-    std::fprintf(f, "      \"time_based_unstuck_threshold\": %.4f,\n", cfg.strategy.time_based_unstuck_threshold);
     std::fprintf(f, "      \"time_based_unstuck_age\": %d\n", cfg.strategy.time_based_unstuck_age);
     std::fprintf(f, "    },\n");
     std::fprintf(f, "    \"initial_balance_usd\": %.2f,\n", cfg.initial_balance_usd);
@@ -169,7 +168,9 @@ static std::vector<LoadedCandles> split_candles(const LoadedCandles& loaded,
 }
 
 static void run_backtest(Config const& cfg) {
-    std::string const res_dir = create_results_dir("backtests");
+    // Fix for audit issue C1: use cfg.output.dir instead of hardcoded "backtests"
+    std::string const base = cfg.output.dir.empty() ? std::string("results") : cfg.output.dir;
+    std::string const res_dir = create_results_dir(base);
     std::printf("Results dir: %s\n", res_dir.c_str());
 
     std::printf("Loading symbol info...\n");
@@ -279,16 +280,14 @@ static void apply_params_to_cfg(Config& cfg, const std::map<std::string, double>
             cfg.strategy.maker_fee_pct = v;
         else if (k == "time_based_unstuck_pct")
             cfg.strategy.time_based_unstuck_pct = v;
-        else if (k == "time_based_unstuck_threshold")
-            cfg.strategy.time_based_unstuck_threshold = v;
         else if (k == "time_based_unstuck_age")
             cfg.strategy.time_based_unstuck_age = static_cast<int>(v);
         else if (k == "total_wallet_exposure")
             cfg.total_wallet_exposure = v;
     }
-    int const a = cfg.strategy.entry_ema_period;
-    int const b = cfg.strategy.parkinson_volatility_span;
-    cfg.warmup_candles = (a > b) ? a : b;
+    // Don't recompute warmup_candles here — keep whatever was set by the caller.
+    // In OPTIMIZE mode, warmup_candles was set to max_warmup from bounds (matching
+    // the data loading). Recomputing it here would break the consistency.
 }
 
 /// Find the most recent pareto JSON in optimize_results/*/ and read the first entry's params.
@@ -349,10 +348,14 @@ static bool read_pareto_best(const std::string& base_path,
     return false;
 }
 
-static void run_optimize(Config const& cfg, bool backtest_best, bool show_tui) {
-    std::string const base = "optimize_results";
+static void run_optimize(Config const& cfg_in, bool backtest_best, bool show_tui) {
+    // Make a mutable copy so we can set warmup_candles = max_warmup
+    Config cfg = cfg_in;
+
+    // Fix for audit issue C1: use cfg.output.dir instead of hardcoded "optimize_results"
+    std::string const base = cfg.output.dir.empty() ? std::string("results") : cfg.output.dir;
     std::string const res_dir = create_results_dir(base);
-    std::string const live_state = "optimize_results/.live_state";
+    std::string const live_state = base + "/.live_state";
     std::printf("Results dir: %s\n", res_dir.c_str());
 
     std::printf("Loading symbol info...\n");
@@ -367,11 +370,14 @@ static void run_optimize(Config const& cfg, bool backtest_best, bool show_tui) {
             if (bval > max_warmup) max_warmup = bval;
         }
     }
-    Config load_cfg = cfg;
-    load_cfg.warmup_candles = max_warmup;
+    // Set cfg.warmup_candles to max_warmup so that make_config_from_genes
+    // uses the same warmup for all candidates, matching the data loading.
+    // This ensures the optimizer's equity curve matches a standalone backtest
+    // with the same warmup.
+    cfg.warmup_candles = max_warmup;
 
     std::printf("Loading candles (warmup=%d)...\n", max_warmup);
-    LoadedCandles const loaded = load_candles(load_cfg);
+    LoadedCandles const loaded = load_candles(cfg);
     size_t const n_sym = cfg.symbols.size();
     std::vector<LoadedCandles> const per_symbol = split_candles(loaded, n_sym);
     std::printf("  Total candles: %zu, per symbol: %zu, trading start: %zu\n",
@@ -465,18 +471,20 @@ int main(int argc, char** argv) {
     // Check for standalone --tui or --backtest-best mode
     if (std::strcmp(argv[1], "--tui") == 0) {
         Config const cfg = load_config(config_path, Mode::OPTIMIZE);
-        std::printf("Watching live state: optimize_results/.live_state\n");
-        run_watch_tui("optimize_results/.live_state");
+        std::string const base = cfg.output.dir.empty() ? std::string("results") : cfg.output.dir;
+        std::printf("Watching live state: %s/.live_state\n", base.c_str());
+        run_watch_tui(base + "/.live_state");
         return 0;
     }
 
     if (std::strcmp(argv[1], "--backtest-best") == 0) {
         Config cfg = load_config(config_path, Mode::OPTIMIZE);
+        std::string const base = cfg.output.dir.empty() ? std::string("results") : cfg.output.dir;
         std::map<std::string, double> best_params;
         // 1) Try most recent _pareto.json
-        if (!read_pareto_best("optimize_results", best_params)) {
+        if (!read_pareto_best(base, best_params)) {
             // 2) Try .live_state — pick entry with LOWEST constraint_violation
-            std::string const live_path = "optimize_results/.live_state";
+            std::string const live_path = base + "/.live_state";
             simdjson::padded_string j;
             if (!simdjson::padded_string::load(live_path).get(j)) {
                 simdjson::ondemand::parser p;
@@ -489,8 +497,11 @@ int main(int argc, char** argv) {
                         for (auto elem : top_arr) {
                             simdjson::ondemand::object ro;
                             if (elem.get_object().get(ro)) continue;
+                            // Fix for audit issue H2: original `cv > best_cv` was
+                            // inverted — it skipped candidates with LOWER cv than the
+                            // current best, instead of skipping those with HIGHER cv.
                             double cv = 1e99;
-                            if (!ro["constraint_violation"].get_double().get(cv) && cv > best_cv) continue;
+                            if (!ro["constraint_violation"].get_double().get(cv) && cv >= best_cv) continue;
                             simdjson::ondemand::object params_obj;
                             if (ro["params"].get_object().get(params_obj)) continue;
                             best_cv = cv;
@@ -520,7 +531,7 @@ int main(int argc, char** argv) {
 
         apply_params_to_cfg(cfg, best_params);
 
-        std::string best_dir = "optimize_results/best_from_live";
+        std::string best_dir = base + "/best_from_live";
         std::error_code ec;
         std::filesystem::create_directories(best_dir, ec);
         backtest_and_report(cfg, best_dir);

@@ -59,6 +59,10 @@ void process_entries(const Config& strat, const SymbolInfo& info,
         pos.total_qty = qty;
         pos.entry_levels = 1;
         pos.entry_tick = current_tick;
+        // Track entry timestamp for time-based unstuck (ms since epoch).
+        pos.entry_timestamp_ms = candle.timestamp;
+        // Reset unstuck state for the new position.
+        pos.unstuck_levels = 0;
         // Apply maker fee: fee = abs(order_value) * maker_fee_pct
         double const entry_fee = std::abs(qty * candle.close) * strat.strategy.maker_fee_pct;
         pos.realized_pnl -= entry_fee;
