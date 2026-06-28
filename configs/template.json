@@ -13,7 +13,7 @@
     "double_down_factor": 0.5,
     "close_grid_spacing_pct": 0.01,
     "close_grid_count": 2,
-    "sl_upnl_pct": -0.10,
+    "sl_upnl_pct": -0.1,
     "n_positions": 1,
     "parkinson_volatility_span": 12,
     "maker_fee_pct": 0.001
@@ -22,20 +22,18 @@
     "n_workers": 8,
     "max_iterations": 50000,
     "limits": {
-      "gain_usd": { "min": -100.0 },
-      "equity_balance_diff_neg_max_usd": { "max": 100.0 }
+      "gain_usd": {"min": -100.0},
+      "equity_balance_diff_neg_max_usd": {"max": 100.0}
     },
     "scoring": [
-      { "metric": "sharpe_ratio_usd", "weight": 1.0 },
-      { "metric": "sortino_ratio_usd", "weight": 0.5 },
-      { "metric": "mdg_usd", "weight": 0.3 }
+      {"metric": "sharpe_ratio_usd", "weight": 1.0},
+      {"metric": "sortino_ratio_usd", "weight": 0.5},
+      {"metric": "mdg_usd", "weight": 0.3}
     ],
     "bounds": {
       "entry_ema_period": [12, 48],
-      "initial_qty_pct": [0.02, 0.10]
+      "initial_qty_pct": [0.02, 0.1]
     }
   },
-  "output": {
-    "dir": "results"
-  }
+  "output": {"dir": "results"}
 }
