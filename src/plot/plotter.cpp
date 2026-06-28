@@ -49,7 +49,6 @@ std::string fmt_g6(double v) {
 /// create_metrics_panel(): 22 metrics, one per line, format "key: value".
 /// Order matches the Python script.
 std::string build_metrics_panel_text(const Metrics& m, const std::vector<EquityPoint>& curve) {
-    // Cumulative return in % (computed from equity curve, like the Python script)
     std::string cumret;
     if (curve.size() >= 2 && curve.front().equity > 0.0) {
         double const initial = curve.front().equity;
@@ -60,30 +59,36 @@ std::string build_metrics_panel_text(const Metrics& m, const std::vector<EquityP
         cumret = "-";
     }
 
+    auto label = [](const std::string& raw) {
+        std::string out = raw;
+        for (auto& c : out) if (c == '_') c = ' ';
+        return out;
+    };
+
     std::string text;
     text.reserve(1024);
     text += "adg: " + fmt_g6(m.adg_usd) + "\n";
     text += "mdg: " + fmt_g6(m.mdg_usd) + "\n";
     text += "gain: " + fmt_g6(m.gain) + "\n";
-    text += "cumulative_return: " + cumret + "\n";
-    text += "drawdown_worst: " + fmt_g6(m.drawdown_worst) + "\n";
-    text += "drawdown_worst_mean_1pct: " + fmt_g6(m.drawdown_worst_mean_1pct) + "\n";
-    text += "loss_profit_ratio: " + fmt_g6(m.loss_profit_ratio_long) + "\n";
-    text += "sortino_ratio: " + fmt_g6(m.sortino_ratio_usd) + "\n";
-    text += "calmar_ratio: " + fmt_g6(m.calmar_ratio_usd) + "\n";
-    text += "sterling_ratio: " + fmt_g6(m.sterling_ratio) + "\n";
-    text += "sharpe_ratio: " + fmt_g6(m.sharpe_ratio_usd) + "\n";
-    text += "omega_ratio: " + fmt_g6(m.omega_ratio_usd) + "\n";
-    text += "equity_balance_diff_neg_max: " + fmt_g6(m.equity_balance_diff_neg_max_usd) + "\n";
-    text += "equity_balance_diff_neg_mean: " + fmt_g6(m.equity_balance_diff_neg_mean_usd) + "\n";
-    text += "equity_balance_diff_pos_max: " + fmt_g6(m.equity_balance_diff_pos_max_usd) + "\n";
-    text += "equity_balance_diff_pos_mean: " + fmt_g6(m.equity_balance_diff_pos_mean_usd) + "\n";
-    text += "position_held_hours_max: " + fmt_g6(m.position_held_hours_max) + "\n";
-    text += "position_held_hours_mean: " + fmt_g6(m.position_held_hours_mean) + "\n";
-    text += "position_held_hours_median: " + fmt_g6(m.position_held_hours_median) + "\n";
-    text += "position_unchanged_hours_max: " + fmt_g6(m.position_unchanged_hours_max) + "\n";
-    text += "positions_held_per_day: " + fmt_g6(m.positions_held_per_day) + "\n";
-    text += "peak_recovery_hours: " + fmt_g6(m.peak_recovery_hours_equity_usd);
+    text += label("cumulative_return") + ": " + cumret + "\n";
+    text += label("drawdown_worst") + ": " + fmt_g6(m.drawdown_worst) + "\n";
+    text += label("drawdown_worst_mean_1pct") + ": " + fmt_g6(m.drawdown_worst_mean_1pct) + "\n";
+    text += label("loss_profit_ratio") + ": " + fmt_g6(m.loss_profit_ratio_long) + "\n";
+    text += label("sortino_ratio") + ": " + fmt_g6(m.sortino_ratio_usd) + "\n";
+    text += label("calmar_ratio") + ": " + fmt_g6(m.calmar_ratio_usd) + "\n";
+    text += label("sterling_ratio") + ": " + fmt_g6(m.sterling_ratio) + "\n";
+    text += label("sharpe_ratio") + ": " + fmt_g6(m.sharpe_ratio_usd) + "\n";
+    text += label("omega_ratio") + ": " + fmt_g6(m.omega_ratio_usd) + "\n";
+    text += label("equity_balance_diff_neg_max") + ": " + fmt_g6(m.equity_balance_diff_neg_max_usd) + "\n";
+    text += label("equity_balance_diff_neg_mean") + ": " + fmt_g6(m.equity_balance_diff_neg_mean_usd) + "\n";
+    text += label("equity_balance_diff_pos_max") + ": " + fmt_g6(m.equity_balance_diff_pos_max_usd) + "\n";
+    text += label("equity_balance_diff_pos_mean") + ": " + fmt_g6(m.equity_balance_diff_pos_mean_usd) + "\n";
+    text += label("position_held_hours_max") + ": " + fmt_g6(m.position_held_hours_max) + "\n";
+    text += label("position_held_hours_mean") + ": " + fmt_g6(m.position_held_hours_mean) + "\n";
+    text += label("position_held_hours_median") + ": " + fmt_g6(m.position_held_hours_median) + "\n";
+    text += label("position_unchanged_hours_max") + ": " + fmt_g6(m.position_unchanged_hours_max) + "\n";
+    text += label("positions_held_per_day") + ": " + fmt_g6(m.positions_held_per_day) + "\n";
+    text += label("peak_recovery_hours") + ": " + fmt_g6(m.peak_recovery_hours_equity_usd);
     return text;
 }
 } // anonymous namespace
@@ -157,8 +162,8 @@ void Plotter::equity_chart() {
 
     // gnuplot uses \n (literal backslash-n) for newlines inside quoted strings.
     // build_metrics_panel_text returns real newlines; convert them to \\n for gnuplot.
-    // Also escape underscores (_ → \_) because the terminal is "enhanced" and
-    // would otherwise interpret _ as a subscript marker (X_a → X with subscript a).
+    // build_metrics_panel_text replaces underscores with spaces so the "enhanced"
+    // terminal mode never sees a raw _ (which would start subscript).
     std::string gnuplot_text;
     gnuplot_text.reserve(panel_text.size() * 2);
     for (char c : panel_text) {
@@ -167,16 +172,18 @@ void Plotter::equity_chart() {
         } else if (c == '"') {
             gnuplot_text += "\\\"";
         } else if (c == '_') {
-            gnuplot_text += "\\_";
+            // double-escape so gnuplot's double-quote string parser
+            // turns \\_ into \_ before enhanced text sees it
+            gnuplot_text += "\\\\_";
         } else {
             gnuplot_text += c;
         }
     }
 
     // Style: JK2-inspired dark blue panel with light blue border.
-    // font ',9' = 9pt; textcolor = plot::TEXT (light/white).
+    // font ',11' = 11pt; textcolor = plot::TEXT (light/white).
     cmd(gp, "set style textbox 1 lw 1 fc rgb '#0a1a2a' border rgb '#2a5a8a'\n");
-    cmd(gp, "set label 1 at graph 0.015, graph 0.978 \"%s\" front tc rgb '%s' font ',9' boxed\n",
+    cmd(gp, "set label 1 at graph 0.015, graph 0.978 \"%s\" front tc rgb '%s' font ',11' boxed\n",
         gnuplot_text.c_str(), plot::TEXT);
 
     cmd(gp, "plot '%s' every ::1 using ($1/1000):2 with lines lw 2 lc rgb '%s' title 'Equity', ", csv.c_str(), plot::EQUITY);
