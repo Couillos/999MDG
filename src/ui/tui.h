@@ -55,8 +55,9 @@ private:
     std::string metric_value(const Metrics& m, const std::string& name) const;
 };
 
-/// Watch a live state JSON file (written by running optimization) and display
-/// ncurses TUI, updating every ~500ms. Exits when file disappears or 'q' pressed.
+/// Watch a live state JSON file (written by a running optimization) and display
+/// a ncurses TUI, updating every ~500ms. Exits when the file disappears or 'q'
+/// is pressed. This is the standalone --tui mode.
 void run_watch_tui(const std::string& state_path);
 
 } // namespace martingale

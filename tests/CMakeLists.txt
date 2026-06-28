@@ -61,3 +61,20 @@ target_link_libraries(test_metrics PRIVATE
 target_include_directories(test_metrics PRIVATE ../src)
 
 add_test(NAME test_metrics COMMAND test_metrics)
+
+# Constraint-aware sort validation
+add_executable(test_constraint_sort
+    test_constraint_sort.cpp
+)
+
+target_compile_options(test_constraint_sort PRIVATE
+    ${MARTINGALE_TEST_WARN_FLAGS}
+)
+
+target_link_libraries(test_constraint_sort PRIVATE
+    martingale_lib
+)
+
+target_include_directories(test_constraint_sort PRIVATE ../src)
+
+add_test(NAME test_constraint_sort COMMAND test_constraint_sort)

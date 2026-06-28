@@ -23,7 +23,7 @@
     "time_based_unstuck_age": 24
   },
   "optimize": {
-    "n_workers": 8,
+    "n_workers": 40,
     "max_iterations": 100000,
     "limits": {
       "drawdown_worst": {
@@ -55,7 +55,7 @@
     ],
     "ga": {
       "population_size": 1000,
-      "n_generations": 10,
+      "n_generations": 200,
       "crossover_prob": 0.8,
       "crossover_eta": 15.0,
       "mutation_prob": 0.2,
@@ -112,14 +112,14 @@
         24
       ],
       "time_based_unstuck_pct": [
-        0.005,
         0.15,
-        0.005
+        0.30,
+        0.05
       ],
       "time_based_unstuck_age": [
-        6,
+        72,
         168,
-        6
+        24
       ]
     }
   },

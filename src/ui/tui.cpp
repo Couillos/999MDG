@@ -7,6 +7,7 @@
 #include <simdjson.h>
 #include <sstream>
 #include <thread>
+#include <chrono>
 
 namespace martingale {
 
@@ -40,6 +41,96 @@ std::string param_abbrev(const std::string& name) {
     s = strip("_pct");
     return s.size() > 8 ? s.substr(0, 8) : s;
 }
+
+std::string format_metric(const Metrics& m, const std::string& name) {
+    char buf[16];
+    auto get = [&](double v) {
+        if (v >= 1000.0 || v <= -1000.0) {
+            std::snprintf(buf, sizeof(buf), "%.1f", v);
+        } else if (v >= 1.0 || v <= -1.0) {
+            std::snprintf(buf, sizeof(buf), "%.4f", v);
+        } else {
+            std::snprintf(buf, sizeof(buf), "%.6f", v);
+        }
+        return std::string(buf);
+    };
+    if (name == "adg_smoothed") return get(m.adg_smoothed);
+    if (name == "adg_usd") return get(m.adg_usd);
+    if (name == "calmar_ratio_usd") return get(m.calmar_ratio_usd);
+    if (name == "drawdown_worst") return get(m.drawdown_worst);
+    if (name == "drawdown_worst_mean_1pct") return get(m.drawdown_worst_mean_1pct);
+    if (name == "equity_balance_diff_neg_max_usd") return get(m.equity_balance_diff_neg_max_usd);
+    if (name == "equity_balance_diff_neg_mean_usd") return get(m.equity_balance_diff_neg_mean_usd);
+    if (name == "expected_shortfall_1pct_usd") return get(m.expected_shortfall_1pct_usd);
+    if (name == "gain") return get(m.gain);
+    if (name == "gain_usd") return get(m.gain_usd);
+    if (name == "gain_per_exposure_long_usd") return get(m.gain_per_exposure_long_usd);
+    if (name == "gain_per_exposure_short_usd") return get(m.gain_per_exposure_short_usd);
+    if (name == "loss_profit_ratio") return get(m.loss_profit_ratio);
+    if (name == "loss_profit_ratio_long") return get(m.loss_profit_ratio_long);
+    if (name == "loss_profit_ratio_short") return get(m.loss_profit_ratio_short);
+    if (name == "mdg_usd") return get(m.mdg_usd);
+    if (name == "omega_ratio_usd") return get(m.omega_ratio_usd);
+    if (name == "peak_recovery_hours_equity_usd") return get(m.peak_recovery_hours_equity_usd);
+    if (name == "position_held_hours_max") return get(m.position_held_hours_max);
+    if (name == "position_held_hours_mean") return get(m.position_held_hours_mean);
+    if (name == "position_held_hours_median") return get(m.position_held_hours_median);
+    if (name == "position_unchanged_hours_max") return get(m.position_unchanged_hours_max);
+    if (name == "positions_held_per_day") return get(m.positions_held_per_day);
+    if (name == "sharpe_ratio_usd") return get(m.sharpe_ratio_usd);
+    if (name == "sortino_ratio_usd") return get(m.sortino_ratio_usd);
+    if (name == "sterling_ratio") return get(m.sterling_ratio);
+    if (name == "volume_pct_per_day_avg") return get(m.volume_pct_per_day_avg);
+    return get(0.0);
+}
+
+void set_metric_value(Metrics& m, const std::string& name, double val) {
+    if (name == "adg_smoothed") { m.adg_smoothed = val; return; }
+    if (name == "adg_usd") { m.adg_usd = val; return; }
+    if (name == "adg_per_exponential_fit_error_usd") { m.adg_per_exponential_fit_error_usd = val; return; }
+    if (name == "adg_per_exposure_long_usd") { m.adg_per_exposure_long_usd = val; return; }
+    if (name == "adg_per_exposure_short_usd") { m.adg_per_exposure_short_usd = val; return; }
+    if (name == "calmar_ratio_usd") { m.calmar_ratio_usd = val; return; }
+    if (name == "drawdown_worst") { m.drawdown_worst = val; return; }
+    if (name == "drawdown_worst_mean_1pct") { m.drawdown_worst_mean_1pct = val; return; }
+    if (name == "entry_initial_balance_pct_long") { m.entry_initial_balance_pct_long = val; return; }
+    if (name == "entry_initial_balance_pct_short") { m.entry_initial_balance_pct_short = val; return; }
+    if (name == "equity_balance_diff_neg_max_usd") { m.equity_balance_diff_neg_max_usd = val; return; }
+    if (name == "equity_balance_diff_neg_mean_usd") { m.equity_balance_diff_neg_mean_usd = val; return; }
+    if (name == "equity_balance_diff_pos_max_usd") { m.equity_balance_diff_pos_max_usd = val; return; }
+    if (name == "equity_balance_diff_pos_mean_usd") { m.equity_balance_diff_pos_mean_usd = val; return; }
+    if (name == "equity_choppiness_usd") { m.equity_choppiness_usd = val; return; }
+    if (name == "equity_jerkiness_usd") { m.equity_jerkiness_usd = val; return; }
+    if (name == "expected_shortfall_1pct_usd") { m.expected_shortfall_1pct_usd = val; return; }
+    if (name == "exponential_fit_error_usd") { m.exponential_fit_error_usd = val; return; }
+    if (name == "gain") { m.gain = val; return; }
+    if (name == "gain_usd") { m.gain_usd = val; return; }
+    if (name == "gain_per_exposure_long_usd") { m.gain_per_exposure_long_usd = val; return; }
+    if (name == "gain_per_exposure_short_usd") { m.gain_per_exposure_short_usd = val; return; }
+    if (name == "loss_profit_ratio") { m.loss_profit_ratio = val; return; }
+    if (name == "loss_profit_ratio_long") { m.loss_profit_ratio_long = val; return; }
+    if (name == "loss_profit_ratio_short") { m.loss_profit_ratio_short = val; return; }
+    if (name == "mdg_usd") { m.mdg_usd = val; return; }
+    if (name == "mdg_per_exponential_fit_error_usd") { m.mdg_per_exponential_fit_error_usd = val; return; }
+    if (name == "mdg_per_exposure_long_usd") { m.mdg_per_exposure_long_usd = val; return; }
+    if (name == "mdg_per_exposure_short_usd") { m.mdg_per_exposure_short_usd = val; return; }
+    if (name == "omega_ratio_usd") { m.omega_ratio_usd = val; return; }
+    if (name == "peak_recovery_hours_equity_usd") { m.peak_recovery_hours_equity_usd = val; return; }
+    if (name == "position_held_hours_max") { m.position_held_hours_max = val; return; }
+    if (name == "position_held_hours_mean") { m.position_held_hours_mean = val; return; }
+    if (name == "position_held_hours_median") { m.position_held_hours_median = val; return; }
+    if (name == "position_unchanged_hours_max") { m.position_unchanged_hours_max = val; return; }
+    if (name == "positions_held_per_day") { m.positions_held_per_day = val; return; }
+    if (name == "sharpe_ratio_usd") { m.sharpe_ratio_usd = val; return; }
+    if (name == "sortino_ratio_usd") { m.sortino_ratio_usd = val; return; }
+    if (name == "sterling_ratio") { m.sterling_ratio = val; return; }
+    if (name == "volume_pct_per_day_avg") { m.volume_pct_per_day_avg = val; return; }
+}
+
+// ---------------------------------------------------------------------------
+// OptimizerTUI (used inline by optimize mode — but NOT for ncurses display.
+// We keep the class for API compatibility but optimize mode no longer uses it.)
+// ---------------------------------------------------------------------------
 
 OptimizerTUI::OptimizerTUI(const std::vector<ScoringMetric>& scoring,
                            const std::map<std::string, Limit>& limits,
@@ -94,7 +185,6 @@ void OptimizerTUI::display_loop() {
             abort_ = true;
             break;
         }
-
         draw_ui();
     }
 
@@ -104,7 +194,6 @@ void OptimizerTUI::display_loop() {
     }
 
     endwin();
-
     // Restore stdout line buffering for subsequent output
     std::setvbuf(stdout, nullptr, _IOLBF, 1024);
 }
@@ -125,11 +214,10 @@ void OptimizerTUI::draw_ui() {
         });
 
     size_t const completed = completed_.load();
-
-    erase();
-
     int const cols = COLS > 0 ? COLS : 80;
     int const max_rows = LINES - 4;
+
+    erase();
 
     // Title
     attron(A_BOLD | COLOR_PAIR(1));
@@ -163,7 +251,6 @@ void OptimizerTUI::draw_ui() {
     for (size_t ci = 0; ci < sorted.size() && cur_row < max_rows - 1; ++ci) {
         const auto& r = sorted[ci];
 
-        // Build metric parts: scoring metrics first, then limit metrics, then cv
         std::vector<std::string> parts;
         for (const auto& sm : scoring_) {
             parts.push_back(param_abbrev(sm.metric) + ":" +
@@ -175,23 +262,20 @@ void OptimizerTUI::draw_ui() {
         }
         parts.push_back("cv:" + fmt_val(r.constraint_violation));
 
-        // Single line: " 1 | sr:1.23 cr:0.98 mdg:0.0004 | dd:0.12 cv:320"
         int const indent = rank_w + 1;
         int avail = cols - indent - 1;
 
         attron(COLOR_PAIR(2));
-        mvprintw(cur_row, 0, "%-*d", rank_w, 1);
+        mvprintw(cur_row, 0, "%-*d", rank_w, static_cast<int>(ci + 1));
         attroff(COLOR_PAIR(2));
         int used = indent;
         int idx = 0;
-        bool first_metric = true;
         for (; idx < (int)parts.size(); ++idx) {
             int need = (int)parts[idx].size() + 1;
             if (used + need >= avail) break;
             mvprintw(cur_row, used, "%s ", parts[idx].c_str());
             used += need;
         }
-        // If we overflow, show remaining on next line (should rarely happen)
         if (idx < (int)parts.size() && cur_row < max_rows - 2) {
             ++cur_row;
             mvprintw(cur_row, 0, "%*c", indent, ' ');
@@ -216,93 +300,14 @@ void OptimizerTUI::draw_ui() {
     refresh();
 }
 
-std::string format_metric(const Metrics& m, const std::string& name) {
-    char buf[16];
-    auto get = [&](double v) {
-        if (v >= 1000.0 || v <= -1000.0) {
-            std::snprintf(buf, sizeof(buf), "%.1f", v);
-        } else if (v >= 1.0 || v <= -1.0) {
-            std::snprintf(buf, sizeof(buf), "%.4f", v);
-        } else {
-            std::snprintf(buf, sizeof(buf), "%.6f", v);
-        }
-        return std::string(buf);
-    };
-    if (name == "adg_smoothed") return get(m.adg_smoothed);
-    if (name == "adg_usd") return get(m.adg_usd);
-    if (name == "calmar_ratio_usd") return get(m.calmar_ratio_usd);
-    if (name == "drawdown_worst") return get(m.drawdown_worst);
-    if (name == "drawdown_worst_mean_1pct") return get(m.drawdown_worst_mean_1pct);
-    if (name == "equity_balance_diff_neg_max_usd") return get(m.equity_balance_diff_neg_max_usd);
-    if (name == "equity_balance_diff_neg_mean_usd") return get(m.equity_balance_diff_neg_mean_usd);
-    if (name == "expected_shortfall_1pct_usd") return get(m.expected_shortfall_1pct_usd);
-    if (name == "gain") return get(m.gain);
-    if (name == "gain_usd") return get(m.gain_usd);
-    if (name == "gain_per_exposure_long_usd") return get(m.gain_per_exposure_long_usd);
-    if (name == "gain_per_exposure_short_usd") return get(m.gain_per_exposure_short_usd);
-    if (name == "loss_profit_ratio") return get(m.loss_profit_ratio);
-    if (name == "loss_profit_ratio_long") return get(m.loss_profit_ratio_long);
-    if (name == "loss_profit_ratio_short") return get(m.loss_profit_ratio_short);
-    if (name == "mdg_usd") return get(m.mdg_usd);
-    if (name == "omega_ratio_usd") return get(m.omega_ratio_usd);
-    if (name == "peak_recovery_hours_equity_usd") return get(m.peak_recovery_hours_equity_usd);
-    if (name == "position_held_hours_max") return get(m.position_held_hours_max);
-    if (name == "position_held_hours_mean") return get(m.position_held_hours_mean);
-    if (name == "position_held_hours_median") return get(m.position_held_hours_median);
-    if (name == "position_unchanged_hours_max") return get(m.position_unchanged_hours_max);
-    if (name == "positions_held_per_day") return get(m.positions_held_per_day);
-    if (name == "sharpe_ratio_usd") return get(m.sharpe_ratio_usd);
-    if (name == "sortino_ratio_usd") return get(m.sortino_ratio_usd);
-    if (name == "sterling_ratio") return get(m.sterling_ratio);
-    if (name == "volume_pct_per_day_avg") return get(m.volume_pct_per_day_avg);
-    return get(0.0);
-}
-void set_metric_value(Metrics& m, const std::string& name, double val) {
-    if (name == "adg_smoothed") { m.adg_smoothed = val; return; }
-    if (name == "adg_usd") { m.adg_usd = val; return; }
-    if (name == "adg_per_exponential_fit_error_usd") { m.adg_per_exponential_fit_error_usd = val; return; }
-    if (name == "adg_per_exposure_long_usd") { m.adg_per_exposure_long_usd = val; return; }
-    if (name == "adg_per_exposure_short_usd") { m.adg_per_exposure_short_usd = val; return; }
-    if (name == "calmar_ratio_usd") { m.calmar_ratio_usd = val; return; }
-    if (name == "drawdown_worst") { m.drawdown_worst = val; return; }
-    if (name == "drawdown_worst_mean_1pct") { m.drawdown_worst_mean_1pct = val; return; }
-    if (name == "entry_initial_balance_pct_long") { m.entry_initial_balance_pct_long = val; return; }
-    if (name == "entry_initial_balance_pct_short") { m.entry_initial_balance_pct_short = val; return; }
-    if (name == "equity_balance_diff_neg_max_usd") { m.equity_balance_diff_neg_max_usd = val; return; }
-    if (name == "equity_balance_diff_neg_mean_usd") { m.equity_balance_diff_neg_mean_usd = val; return; }
-    if (name == "equity_balance_diff_pos_max_usd") { m.equity_balance_diff_pos_max_usd = val; return; }
-    if (name == "equity_balance_diff_pos_mean_usd") { m.equity_balance_diff_pos_mean_usd = val; return; }
-    if (name == "equity_choppiness_usd") { m.equity_choppiness_usd = val; return; }
-    if (name == "equity_jerkiness_usd") { m.equity_jerkiness_usd = val; return; }
-    if (name == "expected_shortfall_1pct_usd") { m.expected_shortfall_1pct_usd = val; return; }
-    if (name == "exponential_fit_error_usd") { m.exponential_fit_error_usd = val; return; }
-    if (name == "gain") { m.gain = val; return; }
-    if (name == "gain_usd") { m.gain_usd = val; return; }
-    if (name == "gain_per_exposure_long_usd") { m.gain_per_exposure_long_usd = val; return; }
-    if (name == "gain_per_exposure_short_usd") { m.gain_per_exposure_short_usd = val; return; }
-    if (name == "loss_profit_ratio") { m.loss_profit_ratio = val; return; }
-    if (name == "loss_profit_ratio_long") { m.loss_profit_ratio_long = val; return; }
-    if (name == "loss_profit_ratio_short") { m.loss_profit_ratio_short = val; return; }
-    if (name == "mdg_usd") { m.mdg_usd = val; return; }
-    if (name == "mdg_per_exponential_fit_error_usd") { m.mdg_per_exponential_fit_error_usd = val; return; }
-    if (name == "mdg_per_exposure_long_usd") { m.mdg_per_exposure_long_usd = val; return; }
-    if (name == "mdg_per_exposure_short_usd") { m.mdg_per_exposure_short_usd = val; return; }
-    if (name == "omega_ratio_usd") { m.omega_ratio_usd = val; return; }
-    if (name == "peak_recovery_hours_equity_usd") { m.peak_recovery_hours_equity_usd = val; return; }
-    if (name == "position_held_hours_max") { m.position_held_hours_max = val; return; }
-    if (name == "position_held_hours_mean") { m.position_held_hours_mean = val; return; }
-    if (name == "position_held_hours_median") { m.position_held_hours_median = val; return; }
-    if (name == "position_unchanged_hours_max") { m.position_unchanged_hours_max = val; return; }
-    if (name == "positions_held_per_day") { m.positions_held_per_day = val; return; }
-    if (name == "sharpe_ratio_usd") { m.sharpe_ratio_usd = val; return; }
-    if (name == "sortino_ratio_usd") { m.sortino_ratio_usd = val; return; }
-    if (name == "sterling_ratio") { m.sterling_ratio = val; return; }
-    if (name == "volume_pct_per_day_avg") { m.volume_pct_per_day_avg = val; return; }
-}
-
 std::string OptimizerTUI::metric_value(const Metrics& m, const std::string& name) const {
     return format_metric(m, name);
 }
+
+// ---------------------------------------------------------------------------
+// run_watch_tui — standalone --tui mode: watches a live state JSON file
+// written by a running optimization and displays the Pareto front.
+// ---------------------------------------------------------------------------
 
 void run_watch_tui(const std::string& state_path) {
     initscr();
@@ -491,7 +496,6 @@ void run_watch_tui(const std::string& state_path) {
         for (size_t ci = 0; ci < top.size() && cur_row < max_rows - 1; ++ci) {
             const auto& r = top[ci];
 
-            // Build parts: scoring metrics, limit metrics, cv
             std::vector<std::string> parts;
             for (const auto& sm : scoring) {
                 parts.push_back(param_abbrev(sm.metric) + ":" +
@@ -507,7 +511,7 @@ void run_watch_tui(const std::string& state_path) {
             int avail = cols - indent - 1;
 
             attron(COLOR_PAIR(2));
-            mvprintw(cur_row, 0, "%-*d", rank_w, 1);
+            mvprintw(cur_row, 0, "%-*d", rank_w, static_cast<int>(ci + 1));
             attroff(COLOR_PAIR(2));
             int used = indent;
             int idx = 0;

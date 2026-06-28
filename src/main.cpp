@@ -20,17 +20,44 @@
 #include <simdjson.h>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <unistd.h>
 #include <vector>
 
 using namespace martingale;
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Optimization results always go here (separate from backtest results).
+static constexpr char const* OPT_DIR = "optimization_results";
+
+/// Backtest results always go here (separate from optimization results).
+static constexpr char const* BT_DIR = "backtests";
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 [[noreturn]] static void usage(char const* prog) {
     std::fprintf(stderr,
         "Usage:\n"
         "  %s backtest <config.json>\n"
-        "  %s optimize <config.json> [--tui] [--backtest-best]\n"
-        "  %s --tui <config.json>\n"
-        "  %s --backtest-best <config.json>\n",
+        "  %s optimize <config.json> [--backtest-best]\n"
+        "  %s --tui                     Watch live optimization progress (ncurses)\n"
+        "  %s --backtest-best           Backtest the #1 candidate from the most recent optimization\n"
+        "\n"
+        "Modes:\n"
+        "  backtest <config>            Run a single backtest, output to backtests/\n"
+        "  optimize <config>            Run NSGA-II optimization (progress to stdout),\n"
+        "                               output to optimization_results/\n"
+        "  optimize <config> --backtest-best\n"
+        "                               Same as optimize, then backtest the #1 candidate\n"
+        "  --tui                        Watch live state of a running optimization\n"
+        "                               (run in parallel with 'optimize' in another terminal)\n"
+        "  --backtest-best              Backtest the best candidate from the most\n"
+        "                               recent optimization (no config needed)\n",
         prog, prog, prog, prog);
     std::exit(1);
 }
@@ -167,93 +194,6 @@ static std::vector<LoadedCandles> split_candles(const LoadedCandles& loaded,
     return result;
 }
 
-static void run_backtest(Config const& cfg) {
-    // Fix for audit issue C1: use cfg.output.dir instead of hardcoded "backtests"
-    std::string const base = cfg.output.dir.empty() ? std::string("results") : cfg.output.dir;
-    std::string const res_dir = create_results_dir(base);
-    std::printf("Results dir: %s\n", res_dir.c_str());
-
-    std::printf("Loading symbol info...\n");
-    std::vector<SymbolInfo> const symbols_info = fetch_symbol_info(
-        std::string("data/cache"));
-    std::printf("  Loaded %zu symbols\n", symbols_info.size());
-
-    std::printf("Loading candles...\n");
-    LoadedCandles const loaded = load_candles(cfg);
-    size_t const n_sym = cfg.symbols.size();
-    std::vector<LoadedCandles> const per_symbol = split_candles(loaded, n_sym);
-    std::printf("  Total candles: %zu, per symbol: %zu, trading start: %zu\n",
-                loaded.candles.size(), loaded.candles.size() / n_sym,
-                loaded.trading_start_idx);
-
-    std::printf("Running backtest...\n");
-    BacktestResult const result = run_backtest(cfg, per_symbol, symbols_info, res_dir);
-    std::printf("  Equity curve points: %zu\n", result.equity_curve.size());
-
-    std::printf("Computing metrics...\n");
-    Metrics const metrics = compute_metrics(result, cfg);
-
-    std::string const json_path = res_dir + "/analysis.json";
-    write_analysis_json(json_path, metrics, cfg, result.equity_curve);
-    std::printf("  Wrote %s\n", json_path.c_str());
-
-    std::printf("Generating charts...\n");
-    Plotter plotter(cfg, result.equity_curve, metrics, res_dir);
-    plotter.generate_all();
-
-    if (!result.equity_curve.empty()) {
-        auto const& first = result.equity_curve.front();
-        auto const& last = result.equity_curve.back();
-        std::printf("\nBacktest complete:\n");
-        std::printf("  Initial equity: %.2f\n", first.equity);
-        std::printf("  Final equity:   %.2f\n", last.equity);
-        std::printf("  Return:         %+.4f%%\n",
-                    (last.equity - first.equity) / first.equity * 100.0);
-        std::printf("  Sharpe:         %.4f\n", metrics.sharpe_ratio_usd);
-        std::printf("  Calmar:         %.4f\n", metrics.calmar_ratio_usd);
-    }
-}
-
-/// Runs a full backtest with the given config and returns its results + metrics.
-static void backtest_and_report(Config cfg, const std::string& res_dir) {
-    std::printf("Loading symbol info...\n");
-    std::vector<SymbolInfo> const symbols_info = fetch_symbol_info(
-        std::string("data/cache"));
-    std::printf("  Loaded %zu symbols\n", symbols_info.size());
-
-    std::printf("Loading candles...\n");
-    LoadedCandles const loaded = load_candles(cfg);
-    size_t const n_sym = cfg.symbols.size();
-    std::vector<LoadedCandles> const per_symbol = split_candles(loaded, n_sym);
-
-    std::printf("Running backtest...\n");
-    BacktestResult const result = run_backtest(cfg, per_symbol, symbols_info, res_dir);
-    std::printf("  Equity curve points: %zu\n", result.equity_curve.size());
-
-    std::printf("Computing metrics...\n");
-    Metrics const metrics = compute_metrics(result, cfg);
-
-    std::string const json_path = res_dir + "/analysis.json";
-    write_analysis_json(json_path, metrics, cfg, result.equity_curve);
-    std::printf("  Wrote %s\n", json_path.c_str());
-
-    std::printf("Generating charts...\n");
-    Plotter plotter(cfg, result.equity_curve, metrics, res_dir);
-    plotter.generate_all();
-
-    if (!result.equity_curve.empty()) {
-        auto const& first = result.equity_curve.front();
-        auto const& last = result.equity_curve.back();
-        std::printf("\nBacktest complete:\n");
-        std::printf("  Initial equity: %.2f\n", first.equity);
-        std::printf("  Final equity:   %.2f\n", last.equity);
-        std::printf("  Return:         %+.4f%%\n",
-                    (last.equity - first.equity) / first.equity * 100.0);
-        std::printf("  Sharpe:         %.4f\n", metrics.sharpe_ratio_usd);
-        std::printf("  Calmar:         %.4f\n", metrics.calmar_ratio_usd);
-    }
-}
-
 static void apply_params_to_cfg(Config& cfg, const std::map<std::string, double>& params) {
     for (const auto& [k, v] : params) {
         if (k == "entry_ema_period")
@@ -290,24 +230,64 @@ static void apply_params_to_cfg(Config& cfg, const std::map<std::string, double>
     // the data loading). Recomputing it here would break the consistency.
 }
 
-/// Find the most recent pareto JSON in optimize_results/*/ and read the first entry's params.
-/// Returns false if nothing found.
-static bool read_pareto_best(const std::string& base_path,
-                             std::map<std::string, double>& out_params) {
+/// Find the most recent optimization run directory in optimization_results/.
+/// Returns empty path if none found.
+static std::string find_latest_opt_dir() {
     namespace fs = std::filesystem;
-    if (!fs::is_directory(base_path)) return false;
+    if (!fs::is_directory(OPT_DIR)) return {};
 
-    // Find most recent subdirectory by name (YYYY-MM-DD_HH-MM-SS)
     fs::path latest;
-    for (auto const& entry : fs::directory_iterator(base_path)) {
+    for (auto const& entry : fs::directory_iterator(OPT_DIR)) {
         if (!entry.is_directory()) continue;
         if (latest.empty() || entry.path().filename() > latest.filename()) {
             latest = entry.path();
         }
     }
-    if (latest.empty()) return false;
+    return latest.string();
+}
 
-    // Look for _pareto.json
+/// Read the best candidate's params from the most recent optimization.
+/// Tries (in order):
+///   1. optimization_results/<latest>/results_pareto.json (first entry)
+///   2. optimization_results/.live_state (lowest cv)
+/// Returns false if nothing found.
+static bool read_best_from_latest_opti(std::map<std::string, double>& out_params) {
+    namespace fs = std::filesystem;
+
+    std::string const latest = find_latest_opt_dir();
+    if (latest.empty()) {
+        // Fallback: try .live_state at the root
+        std::string const live_path = std::string(OPT_DIR) + "/.live_state";
+        simdjson::padded_string j;
+        if (simdjson::padded_string::load(live_path).get(j)) return false;
+        simdjson::ondemand::parser p;
+        simdjson::ondemand::document doc;
+        if (p.iterate(j).get(doc)) return false;
+        simdjson::ondemand::object root;
+        simdjson::ondemand::array top_arr;
+        if (doc.get_object().get(root) || root["top"].get_array().get(top_arr)) return false;
+        double best_cv = 1e99;
+        for (auto elem : top_arr) {
+            simdjson::ondemand::object ro;
+            if (elem.get_object().get(ro)) continue;
+            double cv = 1e99;
+            if (!ro["constraint_violation"].get_double().get(cv) && cv >= best_cv) continue;
+            simdjson::ondemand::object params_obj;
+            if (ro["params"].get_object().get(params_obj)) continue;
+            best_cv = cv;
+            out_params.clear();
+            for (auto pf : params_obj) {
+                std::string_view pk;
+                if (pf.unescaped_key().get(pk)) continue;
+                double pv;
+                if (!pf.value().get_double().get(pv))
+                    out_params[std::string(pk)] = pv;
+            }
+        }
+        return !out_params.empty();
+    }
+
+    // Try results_pareto.json in the latest dir
     fs::path pareto_path;
     for (auto const& entry : fs::directory_iterator(latest)) {
         std::string name = entry.path().filename().string();
@@ -316,26 +296,50 @@ static bool read_pareto_best(const std::string& base_path,
             break;
         }
     }
-    if (pareto_path.empty()) return false;
+    if (!pareto_path.empty()) {
+        simdjson::padded_string json_data;
+        if (simdjson::padded_string::load(pareto_path.string()).get(json_data)) return false;
+        simdjson::ondemand::parser parser;
+        simdjson::ondemand::document doc;
+        if (parser.iterate(json_data).get(doc)) return false;
+        simdjson::ondemand::array arr;
+        if (doc.get_array().get(arr)) return false;
+        for (auto elem : arr) {
+            simdjson::ondemand::object entry;
+            if (elem.get_object().get(entry)) continue;
+            simdjson::ondemand::object params_obj;
+            if (entry["params"].get_object().get(params_obj)) continue;
+            for (auto pf : params_obj) {
+                std::string_view pk;
+                if (pf.unescaped_key().get(pk)) continue;
+                double pv;
+                if (!pf.value().get_double().get(pv))
+                    out_params[std::string(pk)] = pv;
+            }
+            return true;
+        }
+    }
 
-    // Read JSON array, take first entry's params
-    simdjson::padded_string json_data;
-    if (simdjson::padded_string::load(pareto_path.string()).get(json_data)) return false;
-
-    simdjson::ondemand::parser parser;
+    // Fallback: try .live_state in the latest dir
+    std::string const live_path = latest + "/.live_state";
+    simdjson::padded_string j;
+    if (simdjson::padded_string::load(live_path).get(j)) return false;
+    simdjson::ondemand::parser p;
     simdjson::ondemand::document doc;
-    if (parser.iterate(json_data).get(doc)) return false;
-
-    simdjson::ondemand::array arr;
-    if (doc.get_array().get(arr)) return false;
-
-    for (auto elem : arr) {
-        simdjson::ondemand::object entry;
-        if (elem.get_object().get(entry)) continue;
-
+    if (p.iterate(j).get(doc)) return false;
+    simdjson::ondemand::object root;
+    simdjson::ondemand::array top_arr;
+    if (doc.get_object().get(root) || root["top"].get_array().get(top_arr)) return false;
+    double best_cv = 1e99;
+    for (auto elem : top_arr) {
+        simdjson::ondemand::object ro;
+        if (elem.get_object().get(ro)) continue;
+        double cv = 1e99;
+        if (!ro["constraint_violation"].get_double().get(cv) && cv >= best_cv) continue;
         simdjson::ondemand::object params_obj;
-        if (entry["params"].get_object().get(params_obj)) continue;
-
+        if (ro["params"].get_object().get(params_obj)) continue;
+        best_cv = cv;
+        out_params.clear();
         for (auto pf : params_obj) {
             std::string_view pk;
             if (pf.unescaped_key().get(pk)) continue;
@@ -343,20 +347,74 @@ static bool read_pareto_best(const std::string& base_path,
             if (!pf.value().get_double().get(pv))
                 out_params[std::string(pk)] = pv;
         }
-        return true;
     }
-    return false;
+    return !out_params.empty();
 }
 
-static void run_optimize(Config const& cfg_in, bool backtest_best, bool show_tui) {
+// ============================================================================
+// Backtest runners
+// ============================================================================
+
+/// Runs a full backtest with the given config and writes results to res_dir.
+/// All log output goes to stdout (captured by the TUI when running in optimize
+/// mode, or directly to terminal in backtest mode).
+static void backtest_and_report(Config cfg, const std::string& res_dir) {
+    std::printf("Loading symbol info...\n");
+    std::vector<SymbolInfo> const symbols_info = fetch_symbol_info(
+        std::string("data/cache"));
+    std::printf("  Loaded %zu symbols\n", symbols_info.size());
+
+    std::printf("Loading candles...\n");
+    LoadedCandles const loaded = load_candles(cfg);
+    size_t const n_sym = cfg.symbols.size();
+    std::vector<LoadedCandles> const per_symbol = split_candles(loaded, n_sym);
+    std::printf("  Total candles: %zu, per symbol: %zu, trading start: %zu\n",
+                loaded.candles.size(), loaded.candles.size() / n_sym,
+                loaded.trading_start_idx);
+
+    std::printf("Running backtest...\n");
+    BacktestResult const result = run_backtest(cfg, per_symbol, symbols_info, res_dir);
+    std::printf("  Equity curve points: %zu\n", result.equity_curve.size());
+
+    std::printf("Computing metrics...\n");
+    Metrics const metrics = compute_metrics(result, cfg);
+
+    std::string const json_path = res_dir + "/analysis.json";
+    write_analysis_json(json_path, metrics, cfg, result.equity_curve);
+    std::printf("  Wrote %s\n", json_path.c_str());
+
+    std::printf("Generating charts...\n");
+    Plotter plotter(cfg, result.equity_curve, metrics, res_dir);
+    plotter.generate_all();
+
+    if (!result.equity_curve.empty()) {
+        auto const& first = result.equity_curve.front();
+        auto const& last = result.equity_curve.back();
+        std::printf("\nBacktest complete:\n");
+        std::printf("  Initial equity: %.2f\n", first.equity);
+        std::printf("  Final equity:   %.2f\n", last.equity);
+        std::printf("  Return:         %+.4f%%\n",
+                    (last.equity - first.equity) / first.equity * 100.0);
+        std::printf("  Sharpe:         %.4f\n", metrics.sharpe_ratio_usd);
+        std::printf("  Calmar:         %.4f\n", metrics.calmar_ratio_usd);
+    }
+}
+
+// ============================================================================
+// Optimizer runner (with integrated TUI)
+// ============================================================================
+
+static void run_optimize(Config const& cfg_in, bool backtest_best) {
     // Make a mutable copy so we can set warmup_candles = max_warmup
     Config cfg = cfg_in;
 
-    // Fix for audit issue C1: use cfg.output.dir instead of hardcoded "optimize_results"
-    std::string const base = cfg.output.dir.empty() ? std::string("results") : cfg.output.dir;
-    std::string const res_dir = create_results_dir(base);
-    std::string const live_state = base + "/.live_state";
-    std::printf("Results dir: %s\n", res_dir.c_str());
+    // Optimization results ALWAYS go to optimization_results/ (separate from
+    // backtests which go to backtests/).
+    std::string const res_dir = create_results_dir(OPT_DIR);
+    std::string const live_state = std::string(OPT_DIR) + "/.live_state";
+    std::printf("Optimization results dir: %s\n", res_dir.c_str());
+    std::printf("Live state: %s  (use '--tui' in another terminal to watch progress)\n",
+                live_state.c_str());
 
     std::printf("Loading symbol info...\n");
     std::vector<SymbolInfo> const symbols_info = fetch_symbol_info(
@@ -372,8 +430,6 @@ static void run_optimize(Config const& cfg_in, bool backtest_best, bool show_tui
     }
     // Set cfg.warmup_candles to max_warmup so that make_config_from_genes
     // uses the same warmup for all candidates, matching the data loading.
-    // This ensures the optimizer's equity curve matches a standalone backtest
-    // with the same warmup.
     cfg.warmup_candles = max_warmup;
 
     std::printf("Loading candles (warmup=%d)...\n", max_warmup);
@@ -386,40 +442,26 @@ static void run_optimize(Config const& cfg_in, bool backtest_best, bool show_tui
 
     std::printf("Running optimization...\n");
 
-    // TUI or stdout progress
-    std::unique_ptr<OptimizerTUI> tui;
-    if (show_tui) {
-        tui = std::make_unique<OptimizerTUI>(
-            cfg.optimize.scoring, cfg.optimize.limits, 0);
-    }
-
+    // Progress is printed to stdout. A separate '--tui' command can be run in
+    // another terminal to watch the live state (Pareto front table) via ncurses.
     auto opt_callback = [&](const RunResult& rr, size_t gen, size_t n_gen) {
-        if (tui) {
-            if (!tui->has_total() && n_gen > 0) tui->set_total(n_gen);
-            tui->push_result(rr);
-            if (tui->should_abort()) {
-                std::printf("\n  Optimization aborted by user.\n");
-            }
-        } else {
-            std::string obj_str;
-            for (size_t i = 0; i < rr.objectives.size(); ++i) {
-                if (i > 0) obj_str += " ";
-                char buf[32];
-                std::snprintf(buf, sizeof(buf), "%.4f", rr.objectives[i]);
-                obj_str += buf;
-            }
-            std::printf("\r  Gen %zu / %zu objectives=[%s] cv=%.6f  ",
-                        gen, n_gen, obj_str.c_str(), rr.constraint_violation);
-            std::fflush(stdout);
+        std::string obj_str;
+        for (size_t i = 0; i < rr.objectives.size(); ++i) {
+            if (i > 0) obj_str += " ";
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.4f", rr.objectives[i]);
+            obj_str += buf;
         }
+        std::printf("\r  Gen %zu / %zu objectives=[%s] cv=%.6f  ",
+                    gen, n_gen, obj_str.c_str(), rr.constraint_violation);
+        std::fflush(stdout);
     };
 
     std::string results_path = res_dir + "/results";
     OptimizerResult const opt_result = run_optimization(
         cfg, per_symbol, symbols_info, results_path, opt_callback, live_state);
 
-    if (tui) tui->finish();
-    else std::printf("\n");
+    std::printf("\n");
 
     auto const& results = opt_result.all_results;
 
@@ -448,113 +490,113 @@ static void run_optimize(Config const& cfg_in, bool backtest_best, bool show_tui
         }
     }
 
-    // Backtest the best candidate if requested (inline)
+    // Backtest the best candidate if requested.
+    // All backtests go directly to backtests/<timestamp>/ (no more best/ subdir).
     if (backtest_best && !results.empty() && results[0].constraint_violation < 1e-10) {
         std::printf("\nBacktesting best candidate...\n");
         Config best_cfg = cfg;
         apply_params_to_cfg(best_cfg, results[0].params);
 
-        std::string best_dir = res_dir + "/best";
-        std::error_code ec;
-        std::filesystem::create_directories(best_dir, ec);
+        std::string best_dir = create_results_dir(BT_DIR);
         backtest_and_report(best_cfg, best_dir);
     }
 }
 
+// ============================================================================
+// main
+// ============================================================================
+
 int main(int argc, char** argv) {
+    // ── Standalone --tui: watch live optimization progress ─────────────────
+    if (argc >= 2 && std::strcmp(argv[1], "--tui") == 0) {
+        std::string const live_state = std::string(OPT_DIR) + "/.live_state";
+        std::printf("Watching live state: %s\n", live_state.c_str());
+        std::printf("(run 'optimize <config>' in another terminal to start an optimization)\n");
+        run_watch_tui(live_state);
+        return 0;
+    }
+
+    // ── Standalone --backtest-best (no config needed) ──────────────────────
+    if (argc >= 2 && std::strcmp(argv[1], "--backtest-best") == 0) {
+        std::printf("Martingale v1.0\n");
+        std::printf("  Mode: --backtest-best (no config, uses latest optimization)\n");
+
+        std::map<std::string, double> best_params;
+        if (!read_best_from_latest_opti(best_params)) {
+            std::fprintf(stderr, "No optimization results found in %s/.\n", OPT_DIR);
+            std::fprintf(stderr, "Run 'optimize <config>' first.\n");
+            return 1;
+        }
+
+        std::string const latest = find_latest_opt_dir();
+        std::printf("  Source: %s\n", latest.empty() ? (std::string(OPT_DIR) + "/.live_state").c_str() : latest.c_str());
+        std::printf("  Best candidate params:\n");
+        for (const auto& [k, v] : best_params) {
+            std::printf("    %s = %.4f\n", k.c_str(), v);
+        }
+
+        // Build a Config from the best params. We need to load the original
+        // config that was used for the optimization to get symbols, dates, etc.
+        // Strategy: look for a config.json copy in the optimization_results dir
+        // (copied there during the optimize run).
+        Config cfg;
+        namespace fs = std::filesystem;
+        std::string config_path;
+        // Try optimization_results/config.json first (copied by run_optimize)
+        std::string candidate = std::string(OPT_DIR) + "/config.json";
+        if (fs::exists(candidate)) config_path = candidate;
+        // Fallback: try in the latest subdir
+        if (config_path.empty() && !latest.empty()) {
+            candidate = latest + "/config.json";
+            if (fs::exists(candidate)) config_path = candidate;
+        }
+        if (config_path.empty()) {
+            // Fallback: ask user to provide a config
+            std::fprintf(stderr, "\nNo config.json found in %s/. The --backtest-best\n", OPT_DIR);
+            std::fprintf(stderr, "mode needs the original config to know symbols, dates, etc.\n");
+            std::fprintf(stderr, "Please re-run with: %s optimize <config.json> --backtest-best\n", argv[0]);
+            return 1;
+        }
+
+        cfg = load_config(config_path, Mode::BACKTEST);
+        apply_params_to_cfg(cfg, best_params);
+
+        std::printf("\n  Symbols:  ");
+        for (size_t i = 0; i < cfg.symbols.size(); ++i) {
+            if (i > 0) std::printf(", ");
+            std::printf("%s", cfg.symbols[i].c_str());
+        }
+        std::printf("\n  Balance:  %.2f USDT\n", cfg.initial_balance_usd);
+        std::printf("  Exposure: %.2f\n", cfg.total_wallet_exposure);
+        std::printf("  Warmup:   %d candles\n", cfg.warmup_candles);
+
+        // All backtests go directly to backtests/<timestamp>/ (no more best/ subdir).
+        std::string best_dir = create_results_dir(BT_DIR);
+        std::printf("\nBacktest results dir: %s\n", best_dir.c_str());
+        backtest_and_report(cfg, best_dir);
+        return 0;
+    }
+
+    // ── Regular modes: backtest/optimize <config> ──────────────────────────
     if (argc < 3) {
         usage(argv[0]);
     }
 
     std::string const config_path(argv[2]);
-
-    // Check for standalone --tui or --backtest-best mode
-    if (std::strcmp(argv[1], "--tui") == 0) {
-        Config const cfg = load_config(config_path, Mode::OPTIMIZE);
-        std::string const base = cfg.output.dir.empty() ? std::string("results") : cfg.output.dir;
-        std::printf("Watching live state: %s/.live_state\n", base.c_str());
-        run_watch_tui(base + "/.live_state");
-        return 0;
-    }
-
-    if (std::strcmp(argv[1], "--backtest-best") == 0) {
-        Config cfg = load_config(config_path, Mode::OPTIMIZE);
-        std::string const base = cfg.output.dir.empty() ? std::string("results") : cfg.output.dir;
-        std::map<std::string, double> best_params;
-        // 1) Try most recent _pareto.json
-        if (!read_pareto_best(base, best_params)) {
-            // 2) Try .live_state — pick entry with LOWEST constraint_violation
-            std::string const live_path = base + "/.live_state";
-            simdjson::padded_string j;
-            if (!simdjson::padded_string::load(live_path).get(j)) {
-                simdjson::ondemand::parser p;
-                simdjson::ondemand::document doc;
-                if (!p.iterate(j).get(doc)) {
-                    simdjson::ondemand::object root;
-                    simdjson::ondemand::array top_arr;
-                    if (!doc.get_object().get(root) && !root["top"].get_array().get(top_arr)) {
-                        double best_cv = 1e99;
-                        for (auto elem : top_arr) {
-                            simdjson::ondemand::object ro;
-                            if (elem.get_object().get(ro)) continue;
-                            // Fix for audit issue H2: original `cv > best_cv` was
-                            // inverted — it skipped candidates with LOWER cv than the
-                            // current best, instead of skipping those with HIGHER cv.
-                            double cv = 1e99;
-                            if (!ro["constraint_violation"].get_double().get(cv) && cv >= best_cv) continue;
-                            simdjson::ondemand::object params_obj;
-                            if (ro["params"].get_object().get(params_obj)) continue;
-                            best_cv = cv;
-                            best_params.clear();
-                            for (auto pf : params_obj) {
-                                std::string_view pk;
-                                if (pf.unescaped_key().get(pk)) continue;
-                                double pv;
-                                if (!pf.value().get_double().get(pv))
-                                    best_params[std::string(pk)] = pv;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (best_params.empty()) {
-            std::fprintf(stderr, "No optimization results yet — run 'optimize' first.\n");
-            return 1;
-        }
-
-        std::printf("Backtesting best candidate from most recent optimization:\n");
-        for (const auto& [k, v] : best_params) {
-            std::printf("  %s = %.4f\n", k.c_str(), v);
-        }
-
-        apply_params_to_cfg(cfg, best_params);
-
-        std::string best_dir = base + "/best_from_live";
-        std::error_code ec;
-        std::filesystem::create_directories(best_dir, ec);
-        backtest_and_report(cfg, best_dir);
-        return 0;
-    }
-
-    // Regular modes: backtest or optimize
-    std::string_view const mode_arg(argv[1]);
     bool backtest_best = false;
-    bool show_tui = false;
 
-    // Parse optional flags
+    // Parse optional flags (only --backtest-best is supported as a flag here;
+    // --tui is a standalone mode handled above)
     for (int i = 3; i < argc; ++i) {
         if (std::strcmp(argv[i], "--backtest-best") == 0) {
             backtest_best = true;
-        } else if (std::strcmp(argv[i], "--tui") == 0) {
-            show_tui = true;
         } else {
             std::fprintf(stderr, "Unknown argument: %s\n", argv[i]);
             usage(argv[0]);
         }
     }
 
+    std::string_view const mode_arg(argv[1]);
     Mode mode;
     if (mode_arg == "backtest") {
         mode = Mode::BACKTEST;
@@ -570,9 +612,7 @@ int main(int argc, char** argv) {
     std::printf("  Mode:     %s\n", mode_str(cfg.mode));
     std::printf("  Symbols:  ");
     for (size_t i = 0; i < cfg.symbols.size(); ++i) {
-        if (i > 0) {
-            std::printf(", ");
-        }
+        if (i > 0) std::printf(", ");
         std::printf("%s", cfg.symbols[i].c_str());
     }
     std::printf("\n");
@@ -581,9 +621,23 @@ int main(int argc, char** argv) {
     std::printf("  Warmup:   %d candles\n", cfg.warmup_candles);
 
     if (mode == Mode::BACKTEST) {
-        run_backtest(cfg);
+        // Backtest results go to backtests/
+        std::string const res_dir = create_results_dir(BT_DIR);
+        std::printf("Backtest results dir: %s\n", res_dir.c_str());
+        backtest_and_report(cfg, res_dir);
     } else {
-        run_optimize(cfg, backtest_best, show_tui);
+        // Copy the config into the optimization results dir so --backtest-best
+        // can later reconstruct the Config without the original file.
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::create_directories(OPT_DIR, ec);
+        // We'll copy after create_results_dir is called inside run_optimize,
+        // so we pass the config_path and copy it there. For simplicity, copy
+        // to optimization_results/config.json (overwritten each run).
+        fs::copy_file(config_path, std::string(OPT_DIR) + "/config.json",
+                      fs::copy_options::overwrite_existing, ec);
+
+        run_optimize(cfg, backtest_best);
     }
 
     return 0;

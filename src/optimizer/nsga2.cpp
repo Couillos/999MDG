@@ -10,15 +10,64 @@ namespace martingale {
 
 // ---------------------------------------------------------------------------
 // Fast non-dominated sort  O(M * N^2)
+// Implements constraint-domination (Deb et al. 2002):
+//   - feasible (cv <= eps) dominates infeasible (cv > eps)
+//   - among infeasible, lower cv dominates
+//   - among feasible, classic Pareto domination on objectives
 // ---------------------------------------------------------------------------
 
+namespace {
+
+constexpr double CV_EPS = 1e-10;
+
+/// Returns true if individual i constraint-dominates individual j.
+///   i dominates j if:
+///     - i is feasible and j is infeasible, OR
+///     - both infeasible and i has strictly lower cv, OR
+///     - both feasible and i Pareto-dominates j on objectives
+bool constraint_dominates(
+    size_t i, size_t j,
+    const std::vector<std::vector<double>>& objectives,
+    const std::vector<double>& cv,
+    bool use_cv)
+{
+    if (use_cv) {
+        double const cv_i = cv[i];
+        double const cv_j = cv[j];
+        bool const i_feas = cv_i <= CV_EPS;
+        bool const j_feas = cv_j <= CV_EPS;
+        if (i_feas && !j_feas) return true;
+        if (!i_feas && j_feas) return false;
+        if (!i_feas && !j_feas) {
+            return cv_i < cv_j;
+        }
+        // both feasible → fall through to Pareto
+    }
+
+    // Pure Pareto domination on objectives (all objectives are minimize).
+    size_t const m = objectives[i].size();
+    bool i_le_j = true;  // i <= j on all objectives
+    bool i_lt_j = false; // i < j on at least one
+    for (size_t k = 0; k < m; ++k) {
+        double const vi = objectives[i][k];
+        double const vj = objectives[j][k];
+        if (vi > vj) { i_le_j = false; break; }
+        if (vi < vj) i_lt_j = true;
+    }
+    return i_le_j && i_lt_j;
+}
+
+} // anonymous namespace
+
 std::vector<int> fast_non_dominated_sort(
-    const std::vector<std::vector<double>>& objectives)
+    const std::vector<std::vector<double>>& objectives,
+    const std::vector<double>& constraint_violation)
 {
     size_t n = objectives.size();
     std::vector<int> rank(n, 0);
     if (n == 0) return rank;
 
+    bool const use_cv = !constraint_violation.empty();
     size_t m = objectives[0].size();
     if (m == 0) {
         for (size_t i = 0; i < n; ++i) rank[i] = 1;
@@ -31,29 +80,12 @@ std::vector<int> fast_non_dominated_sort(
     for (size_t i = 0; i < n; ++i) {
         for (size_t j = 0; j < n; ++j) {
             if (i == j) continue;
-
-            bool i_le_j = true;
-            bool j_le_i = true;
-            bool i_lt_j = false;
-            bool j_lt_i = false;
-
-            for (size_t k = 0; k < m; ++k) {
-                double vi = objectives[i][k];
-                double vj = objectives[j][k];
-
-                if (vi > vj) i_le_j = false;
-                if (vj > vi) j_le_i = false;
-                if (vi < vj) i_lt_j = true;
-                if (vj < vi) j_lt_i = true;
-            }
-
-            if (i_le_j && i_lt_j) {
+            if (constraint_dominates(i, j, objectives, constraint_violation, use_cv)) {
                 dominated[i].push_back(j);
-            } else if (j_le_i && j_lt_i) {
+            } else if (constraint_dominates(j, i, objectives, constraint_violation, use_cv)) {
                 domination_count[i]++;
             }
         }
-
         if (domination_count[i] == 0) {
             rank[i] = 1;
         }
@@ -69,7 +101,6 @@ std::vector<int> fast_non_dominated_sort(
     int front_number = 1;
     while (!current_front.empty()) {
         std::vector<size_t> next_front;
-
         for (size_t i : current_front) {
             for (size_t j : dominated[i]) {
                 domination_count[j]--;
@@ -79,7 +110,6 @@ std::vector<int> fast_non_dominated_sort(
                 }
             }
         }
-
         current_front = std::move(next_front);
         front_number++;
     }
@@ -255,11 +285,16 @@ std::vector<Individual> select_next_generation(
     // generation.)
 
     std::vector<std::vector<double>> objectives(combined.size());
+    std::vector<double> cv(combined.size());
     for (size_t i = 0; i < combined.size(); ++i) {
         objectives[i] = combined[i].objectives;
+        cv[i] = combined[i].constraint_violation;
     }
 
-    std::vector<int> ranks = fast_non_dominated_sort(objectives);
+    // Constraint-aware sort: feasible candidates dominate infeasible ones,
+    // so infeasible candidates get pushed to deeper fronts and are less likely
+    // to survive environmental selection.
+    std::vector<int> ranks = fast_non_dominated_sort(objectives, cv);
 
     int max_rank = 0;
     for (int r : ranks) {

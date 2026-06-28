@@ -23,9 +23,18 @@ struct Individual {
     int generation = 0;
 };
 
-/// Fast non-dominated sort.
+/// Fast non-dominated sort with constraint-domination (Deb et al. 2002).
 /// Returns a vector of front indices: result[i] = front rank of individual i.
-std::vector<int> fast_non_dominated_sort(const std::vector<std::vector<double>>& objectives);
+///
+/// If `constraint_violation` is provided (non-empty), the sort uses the
+/// constraint-domination rule:
+///   - feasible (cv <= eps) dominates infeasible (cv > eps)
+///   - among infeasible, lower cv dominates
+///   - among feasible, classic Pareto domination on objectives
+/// If `constraint_violation` is empty, falls back to pure Pareto domination.
+std::vector<int> fast_non_dominated_sort(
+    const std::vector<std::vector<double>>& objectives,
+    const std::vector<double>& constraint_violation = {});
 
 /// Calculate crowding distance for individuals within a single front.
 /// Modifies individuals' crowding_distance in place.

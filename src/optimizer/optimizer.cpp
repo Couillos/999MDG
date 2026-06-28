@@ -186,16 +186,20 @@ double get_metric_value(const Metrics& m, const std::string& name) {
 
 double compute_total_penalty(const Metrics& m,
                              const std::map<std::string, Limit>& limits) {
+    // Passivbot-style absolute penalty: 1e6 × (absolute breach) per constraint.
+    // The previous (relative_diff)² penalty was far too small (a 10% breach gave
+    // penalty = 0.01, drowned by objective values ~0.06). With 1e6 absolute,
+    // any breach produces a penalty ≥ 1e6 which dominates all objectives and
+    // forces the sort to treat the candidate as infeasible.
+    constexpr double PENALTY_WEIGHT = 1e6;
     double penalty = 0.0;
     for (const auto& [name, lim] : limits) {
         double const val = get_metric_value(m, name);
         if (lim.has_min && val < lim.min) {
-            double const diff = (lim.min - val) / std::max(std::abs(lim.min), 1e-10);
-            penalty += diff * diff;
+            penalty += PENALTY_WEIGHT * (lim.min - val);
         }
         if (lim.has_max && val > lim.max) {
-            double const diff = (val - lim.max) / std::max(std::abs(lim.max), 1e-10);
-            penalty += diff * diff;
+            penalty += PENALTY_WEIGHT * (val - lim.max);
         }
     }
     return penalty;
@@ -315,19 +319,24 @@ void write_result_json(FILE* f, const Individual& ind,
 }
 
 // ---------------------------------------------------------------------------
-// write_pareto_json — rank==1 individuals
+// write_pareto_json — rank==1 individuals (constraint-aware)
+// Only FEASIBLE candidates (cv <= eps) are written to the Pareto front.
+// If no feasible candidate exists, falls back to writing rank==1 infeasible
+// ones (so the user still sees something).
 // ---------------------------------------------------------------------------
 
 void write_pareto_json(const std::string& path,
                        const std::vector<Individual>& population,
                        const std::vector<ParamAxis>& axes)
 {
-    // Compute ranks
+    // Constraint-aware sort: feasible candidates dominate infeasible ones.
     std::vector<std::vector<double>> all_obj(population.size());
+    std::vector<double> all_cv(population.size());
     for (size_t i = 0; i < population.size(); ++i) {
         all_obj[i] = population[i].objectives;
+        all_cv[i] = population[i].constraint_violation;
     }
-    auto ranks = fast_non_dominated_sort(all_obj);
+    auto ranks = fast_non_dominated_sort(all_obj, all_cv);
 
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) {
@@ -335,10 +344,14 @@ void write_pareto_json(const std::string& path,
         return;
     }
 
+    constexpr double CV_EPS = 1e-10;
     std::fprintf(f, "[\n");
     bool first_entry = true;
+    size_t pareto_count = 0;
+    // First pass: rank==1 AND feasible
     for (size_t i = 0; i < population.size(); ++i) {
         if (ranks[i] != 1) continue;
+        if (population[i].constraint_violation > CV_EPS) continue;
         if (!first_entry) std::fprintf(f, ",\n");
         first_entry = false;
 
@@ -367,14 +380,46 @@ void write_pareto_json(const std::string& path,
         std::fprintf(f, ",\"mdg_usd\":%.10f", ind.metrics.mdg_usd);
         std::fprintf(f, ",\"sterling_ratio\":%.10f", ind.metrics.sterling_ratio);
         std::fprintf(f, "}}");
+        ++pareto_count;
+    }
+    // Fallback pass: if no feasible rank==1 was written, write infeasible rank==1
+    // so the user can see what's happening.
+    if (pareto_count == 0) {
+        for (size_t i = 0; i < population.size(); ++i) {
+            if (ranks[i] != 1) continue;
+            if (!first_entry) std::fprintf(f, ",\n");
+            first_entry = false;
+
+            const auto& ind = population[i];
+            std::fprintf(f, "{\"params\":{");
+            bool first = true;
+            for (size_t j = 0; j < axes.size(); ++j) {
+                if (!first) std::fputc(',', f);
+                first = false;
+                std::fprintf(f, "\"%s\":%.10f", axes[j].name.c_str(), ind.genes[j]);
+            }
+            std::fprintf(f, "},\"objectives\":[");
+            for (size_t j = 0; j < ind.objectives.size(); ++j) {
+                if (j > 0) std::fputc(',', f);
+                std::fprintf(f, "%.10f", ind.objectives[j]);
+            }
+            std::fprintf(f, "],\"constraint_violation\":%.10f", ind.constraint_violation);
+            std::fprintf(f, ",\"metrics\":{");
+            std::fprintf(f, "\"adg_usd\":%.10f", ind.metrics.adg_usd);
+            std::fprintf(f, ",\"adg_smoothed\":%.10f", ind.metrics.adg_smoothed);
+            std::fprintf(f, ",\"sharpe_ratio_usd\":%.10f", ind.metrics.sharpe_ratio_usd);
+            std::fprintf(f, ",\"sortino_ratio_usd\":%.10f", ind.metrics.sortino_ratio_usd);
+            std::fprintf(f, ",\"calmar_ratio_usd\":%.10f", ind.metrics.calmar_ratio_usd);
+            std::fprintf(f, ",\"drawdown_worst\":%.10f", ind.metrics.drawdown_worst);
+            std::fprintf(f, ",\"drawdown_worst_mean_1pct\":%.10f", ind.metrics.drawdown_worst_mean_1pct);
+            std::fprintf(f, ",\"mdg_usd\":%.10f", ind.metrics.mdg_usd);
+            std::fprintf(f, ",\"sterling_ratio\":%.10f", ind.metrics.sterling_ratio);
+            std::fprintf(f, "}}");
+            ++pareto_count;
+        }
     }
     std::fprintf(f, "\n]\n");
     std::fclose(f);
-    // Count how many we wrote
-    size_t pareto_count = 0;
-    for (size_t i = 0; i < population.size(); ++i) {
-        if (ranks[i] == 1) ++pareto_count;
-    }
     std::printf("  Wrote %s (%zu pareto-optimal solutions)\n",
                 path.c_str(), pareto_count);
 }
@@ -469,13 +514,18 @@ void write_live_state(const std::string& path,
     }
     std::fprintf(f, "},");
 
-    // top results (top 25 by rank then crowding distance)
+    // top results (top 25 FEASIBLE candidates by rank then crowding distance).
+    // If fewer than 25 feasible candidates exist, fall back to top infeasible
+    // ones (so the TUI always has something to display, with cv visible).
     std::fprintf(f, "\"top\":[");
-    size_t const n = std::min(size_t{25}, sorted_population.size());
-    for (size_t i = 0; i < n; ++i) {
-        if (i > 0) std::fputc(',', f);
+    constexpr double CV_EPS_LS = 1e-10;
+    size_t written = 0;
+    size_t const max_top = 25;
+    // First pass: feasible only
+    for (size_t i = 0; i < sorted_population.size() && written < max_top; ++i) {
+        if (sorted_population[i].constraint_violation > CV_EPS_LS) continue;
+        if (written > 0) std::fputc(',', f);
         const auto& ind = sorted_population[i];
-
         std::fprintf(f, "{\"rank\":%d,\"constraint_violation\":%.10f,\"objectives\":[",
                      ind.rank, ind.constraint_violation);
         for (size_t oi = 0; oi < ind.objectives.size(); ++oi) {
@@ -497,7 +547,6 @@ void write_live_state(const std::string& path,
         all_metric_names.erase(
             std::unique(all_metric_names.begin(), all_metric_names.end()),
             all_metric_names.end());
-
         for (size_t mi = 0; mi < all_metric_names.size(); ++mi) {
             if (mi > 0) std::fputc(',', f);
             std::fprintf(f, "\"%s\":%.10f",
@@ -505,6 +554,43 @@ void write_live_state(const std::string& path,
                          get_metric_value(ind.metrics, all_metric_names[mi]));
         }
         std::fprintf(f, "}}");
+        ++written;
+    }
+    // Fallback pass: if no feasible was written, write top infeasible
+    if (written == 0) {
+        for (size_t i = 0; i < sorted_population.size() && written < max_top; ++i) {
+            if (written > 0) std::fputc(',', f);
+            const auto& ind = sorted_population[i];
+            std::fprintf(f, "{\"rank\":%d,\"constraint_violation\":%.10f,\"objectives\":[",
+                         ind.rank, ind.constraint_violation);
+            for (size_t oi = 0; oi < ind.objectives.size(); ++oi) {
+                if (oi > 0) std::fputc(',', f);
+                std::fprintf(f, "%.10f", ind.objectives[oi]);
+            }
+            std::fprintf(f, "],\"params\":{");
+            bool fp = true;
+            for (size_t j = 0; j < ind.genes.size(); ++j) {
+                if (!fp) std::fputc(',', f);
+                fp = false;
+                std::fprintf(f, "\"%s\":%.10f", axes[j].name.c_str(), ind.genes[j]);
+            }
+            std::fprintf(f, "},\"metrics\":{");
+            std::vector<std::string> all_metric_names;
+            for (const auto& sm : scoring) all_metric_names.push_back(sm.metric);
+            for (const auto& [nm, _] : limits) all_metric_names.push_back(nm);
+            std::sort(all_metric_names.begin(), all_metric_names.end());
+            all_metric_names.erase(
+                std::unique(all_metric_names.begin(), all_metric_names.end()),
+                all_metric_names.end());
+            for (size_t mi = 0; mi < all_metric_names.size(); ++mi) {
+                if (mi > 0) std::fputc(',', f);
+                std::fprintf(f, "\"%s\":%.10f",
+                             all_metric_names[mi].c_str(),
+                             get_metric_value(ind.metrics, all_metric_names[mi]));
+            }
+            std::fprintf(f, "}}");
+            ++written;
+        }
     }
     std::fprintf(f, "]}\n");
     std::fclose(f);
@@ -764,16 +850,23 @@ OptimizerResult run_optimization(
     // 10. Build OptimizerResult
     OptimizerResult result;
 
+    // Constraint-aware final sort: feasible candidates dominate infeasible ones.
     std::vector<std::vector<double>> final_obj(population.size());
+    std::vector<double> final_cv(population.size());
     for (size_t i = 0; i < population.size(); ++i) {
         final_obj[i] = population[i].objectives;
+        final_cv[i] = population[i].constraint_violation;
     }
-    auto final_ranks = fast_non_dominated_sort(final_obj);
+    auto final_ranks = fast_non_dominated_sort(final_obj, final_cv);
 
+    constexpr double CV_EPS = 1e-10;
     for (size_t i = 0; i < population.size(); ++i) {
         RunResult const rr = individual_to_result(population[i], axes);
         result.all_results.push_back(rr);
-        if (final_ranks[i] == 1) {
+        // Pareto front = rank==1 AND feasible (cv <= eps).
+        // If we included infeasible rank==1, the user would see candidates
+        // that violate the constraints in the "best" list.
+        if (final_ranks[i] == 1 && population[i].constraint_violation <= CV_EPS) {
             result.pareto_front.push_back(rr);
         }
     }
