@@ -16,16 +16,17 @@ def _inline(obj):
     return json.dumps(obj)
 
 
-def _pretty(obj, indent=0):
+def _pretty(obj, indent=0, expand_all=False):
     pad = "  " * indent
     if isinstance(obj, dict):
         if not obj:
             return "{}"
-        if len(obj) == 1:
+        if len(obj) == 1 and not expand_all:
             return _inline(obj)
         items = []
         for k, v in obj.items():
-            items.append(f"{pad}  {json.dumps(k)}: {_pretty(v, indent + 1)}")
+            child_expand = expand_all or k in ("bounds", "strategy")
+            items.append(f"{pad}  {json.dumps(k)}: {_pretty(v, indent + 1, child_expand)}")
         return "{\n" + ",\n".join(items) + f"\n{pad}}}"
     if isinstance(obj, list):
         if not obj:
