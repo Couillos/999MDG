@@ -1,6 +1,8 @@
 #include "tui.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <unordered_set>
 #include <cstring>
 #include <fstream>
 #include <ncurses.h>
@@ -45,12 +47,15 @@ std::string param_abbrev(const std::string& name) {
 std::string format_metric(const Metrics& m, const std::string& name) {
     char buf[16];
     auto get = [&](double v) {
-        if (v >= 1000.0 || v <= -1000.0) {
+        double const av = std::fabs(v);
+        if (av >= 1000.0) {
             std::snprintf(buf, sizeof(buf), "%.1f", v);
-        } else if (v >= 1.0 || v <= -1.0) {
+        } else if (av >= 1.0) {
             std::snprintf(buf, sizeof(buf), "%.4f", v);
-        } else {
+        } else if (av >= 1e-4) {
             std::snprintf(buf, sizeof(buf), "%.6f", v);
+        } else {
+            std::snprintf(buf, sizeof(buf), "%.3e", v);
         }
         return std::string(buf);
     };
@@ -252,11 +257,14 @@ void OptimizerTUI::draw_ui() {
         const auto& r = sorted[ci];
 
         std::vector<std::string> parts;
+        std::unordered_set<std::string> seen;
         for (const auto& sm : scoring_) {
             parts.push_back(param_abbrev(sm.metric) + ":" +
                             metric_value(r.metrics, sm.metric));
+            seen.insert(sm.metric);
         }
         for (const auto& [name, _] : limits_) {
+            if (seen.count(name)) continue;
             parts.push_back(param_abbrev(name) + ":" +
                             metric_value(r.metrics, name));
         }
@@ -481,14 +489,17 @@ void run_watch_tui(const std::string& state_path) {
 
         auto fmt_val = [](double v) -> std::string {
             char buf[16];
-            if (v >= 10000.0 || v <= -10000.0) {
+            double const av = std::fabs(v);
+            if (av >= 10000.0) {
                 std::snprintf(buf, sizeof(buf), "%.1f", v);
-            } else if (v >= 100.0 || v <= -100.0) {
+            } else if (av >= 100.0) {
                 std::snprintf(buf, sizeof(buf), "%.2f", v);
-            } else if (v >= 1.0 || v <= -1.0) {
+            } else if (av >= 1.0) {
                 std::snprintf(buf, sizeof(buf), "%.4f", v);
-            } else {
+            } else if (av >= 1e-4) {
                 std::snprintf(buf, sizeof(buf), "%.6f", v);
+            } else {
+                std::snprintf(buf, sizeof(buf), "%.3e", v);
             }
             return std::string(buf);
         };
@@ -497,11 +508,14 @@ void run_watch_tui(const std::string& state_path) {
             const auto& r = top[ci];
 
             std::vector<std::string> parts;
+            std::unordered_set<std::string> seen;
             for (const auto& sm : scoring) {
                 parts.push_back(param_abbrev(sm.metric) + ":" +
                                 format_metric(r.metrics, sm.metric));
+                seen.insert(sm.metric);
             }
             for (const auto& [name, _] : limits) {
+                if (seen.count(name)) continue;
                 parts.push_back(param_abbrev(name) + ":" +
                                 format_metric(r.metrics, name));
             }
