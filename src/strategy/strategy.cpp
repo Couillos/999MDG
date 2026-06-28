@@ -1,6 +1,7 @@
 #include "strategy.h"
-#include "strategy/close_grid.h"
-#include "strategy/entry_grid.h"
+#include "strategy/modules/closes_algo/closes_algo.h"
+#include "strategy/modules/entry_condition/entry_condition.h"
+#include "strategy/modules/entries_algo/entries_algo.h"
 #include "strategy/parkinson_volatility.h"
 #include "strategy/stop_loss.h"
 #include "strategy/unstuck.h"
@@ -44,6 +45,51 @@ double total_equity(double balance, const std::vector<Position>& positions,
     return balance + unrealized;
 }
 
+/// Resets per-position entry state so the next entry starts fresh.
+/// NOTE: entry_timestamp_ms is NOT reset here — the position tracking code
+/// needs it to detect the open→closed transition and record the duration.
+/// avg_entry_price is NOT reset (matching original close_grid.cpp behavior).
+void reset_position_state(Position& pos) {
+    pos.entry_levels = 0;
+    pos.unstuck_levels = 0;
+    pos.entry_tick = 0;
+}
+
+/// Execute a close order: update pos (realized PnL, fees, qty, traded_qty).
+/// Does NOT reset position state on full close — caller handles that.
+void execute_close(Position& pos, const CloseOrder& co, const Candle& candle,
+                   const Config& cfg) {
+    double const fee = std::abs(co.qty * candle.close) * cfg.strategy.maker_fee_pct;
+    pos.realized_pnl += co.qty * (candle.close - pos.avg_entry_price) - fee;
+    pos.total_qty -= co.qty;
+    pos.traded_qty += co.qty;
+}
+
+/// Execute a first entry: open a new position from zero.
+void execute_first_entry(Position& pos, const EntryOrder& eo, const Candle& candle,
+                         const Config& cfg, int64_t current_tick) {
+    double const fee = std::abs(eo.qty * candle.close) * cfg.strategy.maker_fee_pct;
+    pos.avg_entry_price = candle.close;
+    pos.total_qty = eo.qty;
+    pos.entry_levels = 1;
+    pos.entry_tick = current_tick;
+    pos.entry_timestamp_ms = candle.timestamp;
+    pos.unstuck_levels = 0;
+    pos.realized_pnl -= fee;
+}
+
+/// Execute a double-down entry: add to an existing position.
+void execute_double_down(Position& pos, const EntryOrder& eo, const Candle& candle,
+                         const Config& cfg) {
+    double const fee = std::abs(eo.qty * candle.close) * cfg.strategy.maker_fee_pct;
+    pos.realized_pnl -= fee;
+    double const total_cost = pos.avg_entry_price * pos.total_qty
+                            + candle.close * eo.qty;
+    pos.total_qty += eo.qty;
+    pos.avg_entry_price = total_cost / pos.total_qty;
+    pos.entry_levels += 1;
+}
+
 } // anonymous namespace
 
 BacktestResult run_backtest(const Config& cfg,
@@ -59,6 +105,15 @@ BacktestResult run_backtest(const Config& cfg,
 
     // Compute trading start from warmup candles (allows optimizer to vary warmup)
     size_t const ts = static_cast<size_t>(cfg.warmup_candles);
+
+    // Instantiate strategy modules from config (one set for the whole backtest)
+    auto entry_condition = create_entry_condition(cfg.strategy.entry_condition_type);
+    auto entries_algo = create_entries_algo(cfg.strategy.entries_algo_type);
+    auto closes_algo = create_closes_algo(cfg.strategy.closes_algo_type);
+    if (!entry_condition || !entries_algo || !closes_algo) {
+        std::fprintf(stderr, "Failed to create strategy modules\n");
+        return {};
+    }
 
     // Per-symbol state
     std::vector<Position> positions(n, Position{});
@@ -97,8 +152,6 @@ BacktestResult run_backtest(const Config& cfg,
     }
 
     BacktestResult result;
-    // Fix for audit issue S1: guard against ts >= nc which would underflow
-    // the reserve() argument and throw std::length_error under -fno-exceptions.
     size_t const reserve_count = (ts < nc) ? (nc - ts) : 0;
     result.equity_curve.reserve(reserve_count);
     int total_positions = 0;
@@ -151,15 +204,29 @@ BacktestResult run_backtest(const Config& cfg,
             is_active[sym_order[static_cast<size_t>(a)]] = true;
         }
 
-        // Step a: process_closes for all symbols with open positions
+        // ── Step a: CLOSES ─────────────────────────────────────────────────
+        // Ask closes_algo for close orders, then execute them.
         for (size_t s = 0; s < n; ++s) {
             if (positions[s].total_qty > 1e-12) {
-                process_closes(cfg, symbols_info[s], *current_candles[s],
-                               positions[s], total_positions);
+                ModuleContext ctx{cfg, symbols_info[s], *current_candles[s],
+                                  positions[s], balance, is_active[s],
+                                  static_cast<int64_t>(i), ema_values[s]};
+                auto close_orders = closes_algo->compute_closes(ctx);
+                for (auto const& co : close_orders) {
+                    execute_close(positions[s], co, *current_candles[s], cfg);
+                }
+                // Guard against floating-point residuals
+                if (std::abs(positions[s].total_qty) < 1e-12) {
+                    positions[s].total_qty = 0.0;
+                    reset_position_state(positions[s]);
+                    if (total_positions > 0) {
+                        total_positions -= 1;
+                    }
+                }
             }
         }
 
-        // Step b: check_stop_loss for ALL symbols
+        // ── Step b: STOP LOSS ──────────────────────────────────────────────
         for (size_t s = 0; s < n; ++s) {
             if (check_stop_loss(cfg, *current_candles[s], positions[s])) {
                 if (total_positions > 0) {
@@ -168,17 +235,51 @@ BacktestResult run_backtest(const Config& cfg,
             }
         }
 
-        // Step c: process_entries for active symbols
+        // ── Step c: ENTRIES ────────────────────────────────────────────────
+        // In the original code, process_entries checked the EMA threshold for
+        // BOTH first entry AND double-down (the check was before the branch).
+        // We preserve this: entry_condition is checked for both.
         for (size_t s = 0; s < n; ++s) {
-            if (is_active[s]) {
-                process_entries(cfg, symbols_info[s], *current_candles[s],
-                                balance, total_positions, positions[s],
-                                true, ema_values[s],
-                                static_cast<int64_t>(i));
+            if (!is_active[s]) continue;
+
+            double const wallet_exposure_limit = cfg.total_wallet_exposure
+                / static_cast<double>(cfg.strategy.n_positions);
+
+            // Build context once (used for both entry_condition and entries_algo)
+            ModuleContext ctx{cfg, symbols_info[s], *current_candles[s],
+                              positions[s], balance, is_active[s],
+                              static_cast<int64_t>(i), ema_values[s]};
+
+            // Check entry condition for BOTH first entry and double-down
+            // (matches original behavior: EMA check was before the branch)
+            if (!entry_condition->should_enter(ctx)) continue;
+
+            if (positions[s].total_qty < 1e-12) {
+                // ── First entry ──
+                if (total_positions >= cfg.strategy.n_positions) continue;
+
+                auto entry_orders = entries_algo->compute_entries(ctx);
+                if (!entry_orders.empty()) {
+                    execute_first_entry(positions[s], entry_orders[0],
+                                        *current_candles[s], cfg,
+                                        static_cast<int64_t>(i));
+                    total_positions += 1;
+                }
+            } else {
+                // ── Double-down ──
+                double const current_we = balance > 0.0
+                    ? std::abs(positions[s].total_qty * current_candles[s]->close) / balance
+                    : 0.0;
+                if (current_we >= wallet_exposure_limit * 0.999) continue;
+
+                auto entry_orders = entries_algo->compute_entries(ctx);
+                for (auto const& eo : entry_orders) {
+                    execute_double_down(positions[s], eo, *current_candles[s], cfg);
+                }
             }
         }
 
-        // Step d: time-based unstuck for all symbols with open positions
+        // ── Step d: TIME-BASED UNSTUCK ─────────────────────────────────────
         for (size_t s = 0; s < n; ++s) {
             if (positions[s].total_qty > 1e-12) {
                 bool const closed = check_time_based_unstuck(cfg, *current_candles[s],
@@ -189,8 +290,7 @@ BacktestResult run_backtest(const Config& cfg,
             }
         }
 
-        // Step e: enforce exposure limit (auto-reduce if > 1% over limit)
-        // PassivBot-style: when wallet_exposure_ratio > 1.01, crop position
+        // ── Step e: enforce exposure limit (auto-reduce if > 1% over limit) ──
         {
             double const we_limit = cfg.total_wallet_exposure
                                   / static_cast<double>(cfg.strategy.n_positions);
@@ -221,33 +321,24 @@ BacktestResult run_backtest(const Config& cfg,
             balance += positions[s].realized_pnl;
         }
 
-        // Track position entry/exit for position_held_hours (like PassivBot's fill-based approach).
-        // Uses prev_entry_ts (saved at start of tick) to correctly handle close→reopen
-        // within the same tick.
+        // ── Track position entry/exit for position_held_hours ──────────────
         for (size_t s = 0; s < n; ++s) {
             bool const now_open = positions[s].total_qty > 1e-12;
             int64_t const old_ts = prev_entry_ts[s];
             int64_t const new_ts = positions[s].entry_timestamp_ms;
 
             if (old_ts != 0) {
-                // Position was open at start of tick.
                 if (!now_open) {
-                    // Closed during this tick (close_grid / stop_loss / unstuck / crop).
                     double const hrs = static_cast<double>(
                         current_candles[s]->timestamp - old_ts) / 3600000.0;
                     result.position_durations_hours.push_back(hrs);
                     positions[s].entry_timestamp_ms = 0;
                 } else if (new_ts != old_ts) {
-                    // Closed AND reopened this tick (entry_grid set a new timestamp).
                     double const hrs = static_cast<double>(
                         current_candles[s]->timestamp - old_ts) / 3600000.0;
                     result.position_durations_hours.push_back(hrs);
-                    // new_ts is already set by entry_grid — keep it.
                 }
-                // else: still open, unchanged.
             }
-            // else: was closed at start of tick. If now_open, entry_grid already
-            // set entry_timestamp_ms. Nothing to record.
         }
 
         // Record equity point

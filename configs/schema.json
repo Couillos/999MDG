@@ -24,24 +24,66 @@
     "strategy": {
       "type": "object",
       "required": [
-        "entry_ema_period", "entry_ema_distance_pct",
-        "entry_grid_spacing_pct", "initial_qty_pct",
-        "double_down_factor", "close_grid_spacing_pct",
-        "close_grid_count", "sl_upnl_pct", "n_positions",
+        "entry_condition", "entries_algo", "closes_algo",
+        "initial_qty_pct", "sl_upnl_pct", "n_positions",
         "parkinson_volatility_span", "maker_fee_pct"
       ],
       "properties": {
-        "entry_ema_period": { "type": "integer", "minimum": 2 },
-        "entry_ema_distance_pct": { "type": "number", "minimum": 0 },
-        "entry_grid_spacing_pct": { "type": "number", "minimum": 0 },
+        "entry_condition": {
+          "type": "object",
+          "description": "Entry condition module. Exactly one method must be specified.",
+          "properties": {
+            "ema_dist_pct": {
+              "type": "object",
+              "required": ["entry_ema_period", "entry_ema_distance_pct"],
+              "properties": {
+                "entry_ema_period": { "type": "integer", "minimum": 2 },
+                "entry_ema_distance_pct": { "type": "number", "minimum": 0 }
+              }
+            }
+          },
+          "minProperties": 1,
+          "maxProperties": 1
+        },
+        "entries_algo": {
+          "type": "object",
+          "description": "Entries algorithm module. Exactly one method must be specified.",
+          "properties": {
+            "martingale": {
+              "type": "object",
+              "required": ["entry_grid_spacing_pct", "double_down_factor"],
+              "properties": {
+                "entry_grid_spacing_pct": { "type": "number", "minimum": 0 },
+                "double_down_factor": { "type": "number", "minimum": 0 }
+              }
+            }
+          },
+          "minProperties": 1,
+          "maxProperties": 1
+        },
+        "closes_algo": {
+          "type": "object",
+          "description": "Closes algorithm module. Exactly one method must be specified.",
+          "properties": {
+            "simple_grid": {
+              "type": "object",
+              "required": ["close_grid_spacing_pct", "close_grid_count"],
+              "properties": {
+                "close_grid_spacing_pct": { "type": "number", "minimum": 0 },
+                "close_grid_count": { "type": "integer", "minimum": 1 }
+              }
+            }
+          },
+          "minProperties": 1,
+          "maxProperties": 1
+        },
         "initial_qty_pct": { "type": "number", "minimum": 0, "maximum": 1 },
-        "double_down_factor": { "type": "number", "minimum": 0 },
-        "close_grid_spacing_pct": { "type": "number", "minimum": 0 },
-        "close_grid_count": { "type": "integer", "minimum": 1 },
         "sl_upnl_pct": { "type": "number", "maximum": 0 },
         "n_positions": { "type": "integer", "minimum": 1 },
         "parkinson_volatility_span": { "type": "integer", "minimum": 2 },
-        "maker_fee_pct": { "type": "number", "minimum": 0, "maximum": 1 }
+        "maker_fee_pct": { "type": "number", "minimum": 0, "maximum": 1 },
+        "time_based_unstuck_pct": { "type": "number", "minimum": 0 },
+        "time_based_unstuck_age": { "type": "integer", "minimum": 0 }
       }
     },
     "optimize": {
@@ -63,15 +105,29 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["metric", "weight"],
+            "required": ["metric"],
             "properties": {
               "metric": { "type": "string" },
-              "weight": { "type": "number", "minimum": 0 }
+              "goal": { "type": "string", "enum": ["min", "max"] },
+              "weight": { "type": "number" }
             }
+          }
+        },
+        "ga": {
+          "type": "object",
+          "properties": {
+            "population_size": { "type": "integer" },
+            "n_generations": { "type": "integer" },
+            "crossover_prob": { "type": "number" },
+            "crossover_eta": { "type": "number" },
+            "mutation_prob": { "type": "number" },
+            "mutation_eta": { "type": "number" },
+            "mutation_indpb": { "type": "number" }
           }
         },
         "bounds": {
           "type": "object",
+          "description": "Bounds for optimization. Keys must match parameter names used by the selected modules. The optimizer validates that each bound key corresponds to a parameter of the selected module method.",
           "additionalProperties": {
             "type": "array",
             "items": { "type": "number" },

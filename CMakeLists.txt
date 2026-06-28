@@ -13,7 +13,7 @@ endif()
 set(POWERMDG_WARN_FLAGS
     -Wall -Wextra -Wpedantic
     -Wunused-parameter -Wunused-variable -Wunused-function
-    -Wunused-local-typedef -Wshadow -Wnon-virtual-dtor
+    -Wunused-local-typedefs -Wshadow -Wnon-virtual-dtor
     -Wcast-align -Woverloaded-virtual -Wnull-dereference
     -Wdouble-promotion -Wformat=2
 )
@@ -31,7 +31,7 @@ pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
 find_package(zstd REQUIRED)
 find_package(Curses REQUIRED)
 
-option(BUILD_TESTING "Build tests" ON)
+option(BUILD_TESTING "Build tests (requires GTest)" OFF)
 if(BUILD_TESTING)
     enable_testing()
     find_package(GTest REQUIRED)

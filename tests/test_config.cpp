@@ -39,13 +39,25 @@ char const* VALID_JSON = R"({
     "initial_balance_usd": 10000.0,
     "total_wallet_exposure": 2.0,
     "strategy": {
-        "entry_ema_period": 200,
-        "entry_ema_distance_pct": 0.02,
-        "entry_grid_spacing_pct": 0.03,
+        "entry_condition": {
+            "ema_dist_pct": {
+                "entry_ema_period": 200,
+                "entry_ema_distance_pct": 0.02
+            }
+        },
+        "entries_algo": {
+            "martingale": {
+                "entry_grid_spacing_pct": 0.03,
+                "double_down_factor": 0.5
+            }
+        },
+        "closes_algo": {
+            "simple_grid": {
+                "close_grid_spacing_pct": 0.02,
+                "close_grid_count": 3
+            }
+        },
         "initial_qty_pct": 0.03,
-        "double_down_factor": 0.5,
-        "close_grid_spacing_pct": 0.02,
-        "close_grid_count": 3,
         "sl_upnl_pct": -0.05,
         "n_positions": 2,
         "parkinson_volatility_span": 24,
@@ -73,6 +85,11 @@ TEST(ConfigTest, ValidParsing) {
     EXPECT_DOUBLE_EQ(cfg.total_wallet_exposure, 2.0);
 
     auto const& s = cfg.strategy;
+    // Module types
+    EXPECT_EQ(s.entry_condition_type, "ema_dist_pct");
+    EXPECT_EQ(s.entries_algo_type, "martingale");
+    EXPECT_EQ(s.closes_algo_type, "simple_grid");
+    // Flat params (parsed from nested modules)
     EXPECT_EQ(s.entry_ema_period, 200);
     EXPECT_DOUBLE_EQ(s.entry_ema_distance_pct, 0.02);
     EXPECT_DOUBLE_EQ(s.entry_grid_spacing_pct, 0.03);
@@ -113,13 +130,25 @@ TEST(ConfigTest, WarmupCandles) {
         "initial_balance_usd": 1000.0,
         "total_wallet_exposure": 1.0,
         "strategy": {
-            "entry_ema_period": 20,
-            "entry_ema_distance_pct": 0.01,
-            "entry_grid_spacing_pct": 0.01,
+            "entry_condition": {
+                "ema_dist_pct": {
+                    "entry_ema_period": 20,
+                    "entry_ema_distance_pct": 0.01
+                }
+            },
+            "entries_algo": {
+                "martingale": {
+                    "entry_grid_spacing_pct": 0.01,
+                    "double_down_factor": 0.5
+                }
+            },
+            "closes_algo": {
+                "simple_grid": {
+                    "close_grid_spacing_pct": 0.01,
+                    "close_grid_count": 2
+                }
+            },
             "initial_qty_pct": 0.1,
-            "double_down_factor": 0.5,
-            "close_grid_spacing_pct": 0.01,
-            "close_grid_count": 2,
             "sl_upnl_pct": -0.05,
             "n_positions": 1,
             "parkinson_volatility_span": 48,

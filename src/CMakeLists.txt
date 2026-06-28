@@ -5,12 +5,16 @@ set(POWERMDG_SOURCES
     data/cache.cpp
     data/candle_manager.cpp
     plot/plotter.cpp
-    strategy/entry_grid.cpp
-    strategy/close_grid.cpp
     strategy/stop_loss.cpp
     strategy/unstuck.cpp
     strategy/parkinson_volatility.cpp
     strategy/strategy.cpp
+    strategy/modules/entry_condition/entry_condition.cpp
+    strategy/modules/entry_condition/ema_dist_pct.cpp
+    strategy/modules/entries_algo/entries_algo.cpp
+    strategy/modules/entries_algo/martingale.cpp
+    strategy/modules/closes_algo/closes_algo.cpp
+    strategy/modules/closes_algo/simple_grid.cpp
     metrics/calculator.cpp
     utils/thread_pool.cpp
     optimizer/optimizer.cpp

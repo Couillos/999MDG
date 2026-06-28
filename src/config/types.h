@@ -15,7 +15,18 @@ enum class Mode {
 };
 
 /// Fixed strategy parameters read from JSON strategy block.
+///
+/// The strategy is now modular: entry_condition, entries_algo, and closes_algo
+/// are pluggable modules selected by name. The flat parameters below are shared
+/// across all module implementations (each module reads only what it needs).
 struct StrategyParams {
+    // Module selection (determines which algorithm to use for each part)
+    std::string entry_condition_type = "ema_dist_pct";
+    std::string entries_algo_type = "martingale";
+    std::string closes_algo_type = "simple_grid";
+
+    // Flat parameters (used by various modules — see docs/ for which module
+    // reads which parameter)
     int entry_ema_period;
     double entry_ema_distance_pct;
     double entry_grid_spacing_pct;
