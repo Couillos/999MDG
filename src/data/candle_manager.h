@@ -1,5 +1,5 @@
-#ifndef MARTINGALE_DATA_CANDLE_MANAGER_H
-#define MARTINGALE_DATA_CANDLE_MANAGER_H
+#ifndef POWERMDG_DATA_CANDLE_MANAGER_H
+#define POWERMDG_DATA_CANDLE_MANAGER_H
 
 #include "candle.h"
 #include "config/types.h"
@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 
 /// Result of load_candles with candles and the trading-start index.
 struct LoadedCandles {
@@ -19,6 +19,6 @@ struct LoadedCandles {
 /// caches the result, and returns the candles for all symbols concatenated.
 LoadedCandles load_candles(const Config& cfg);
 
-}  // namespace martingale
+}  // namespace powermdg
 
-#endif  // MARTINGALE_DATA_CANDLE_MANAGER_H
+#endif  // POWERMDG_DATA_CANDLE_MANAGER_H

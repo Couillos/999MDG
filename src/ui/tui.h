@@ -1,5 +1,5 @@
-#ifndef MARTINGALE_UI_TUI_H
-#define MARTINGALE_UI_TUI_H
+#ifndef POWERMDG_UI_TUI_H
+#define POWERMDG_UI_TUI_H
 
 #include "config/types.h"
 #include "metrics/types.h"
@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 
 /// Real-time ncurses TUI for displaying optimization progress.
 /// Shows top 25 candidates sorted by score, with scoring metrics and limits.
@@ -60,6 +60,6 @@ private:
 /// is pressed. This is the standalone --tui mode.
 void run_watch_tui(const std::string& state_path);
 
-} // namespace martingale
+} // namespace powermdg
 
-#endif // MARTINGALE_UI_TUI_H
+#endif // POWERMDG_UI_TUI_H

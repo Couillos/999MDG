@@ -1,16 +1,16 @@
-#ifndef MARTINGALE_STRATEGY_PARKINSON_VOLATILITY_H
-#define MARTINGALE_STRATEGY_PARKINSON_VOLATILITY_H
+#ifndef POWERMDG_STRATEGY_PARKINSON_VOLATILITY_H
+#define POWERMDG_STRATEGY_PARKINSON_VOLATILITY_H
 
 #include "data/candle.h"
 #include <cstddef>
 #include <span>
 
-namespace martingale {
+namespace powermdg {
 
 /// Computes Parkinson volatility over a sliding window of candles.
 double compute_parkinson_volatility(std::span<const Candle> candles,
                                     size_t current_idx, int span);
 
-} // namespace martingale
+} // namespace powermdg
 
-#endif // MARTINGALE_STRATEGY_PARKINSON_VOLATILITY_H
+#endif // POWERMDG_STRATEGY_PARKINSON_VOLATILITY_H

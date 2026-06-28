@@ -1,5 +1,5 @@
-#ifndef MARTINGALE_PLOT_PLOTTER_H
-#define MARTINGALE_PLOT_PLOTTER_H
+#ifndef POWERMDG_PLOT_PLOTTER_H
+#define POWERMDG_PLOT_PLOTTER_H
 
 #include "config/types.h"
 #include "metrics/types.h"
@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 
 /// Generates PNG charts from backtest results using gnuplot.
 /// All charts use a dark theme (colors defined in colors.h).
@@ -49,6 +49,6 @@ private:
     std::string title() const;
 };
 
-} // namespace martingale
+} // namespace powermdg
 
-#endif // MARTINGALE_PLOT_PLOTTER_H
+#endif // POWERMDG_PLOT_PLOTTER_H

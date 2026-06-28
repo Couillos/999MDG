@@ -4,13 +4,13 @@
 #include <cstring>
 #include <gtest/gtest.h>
 
-using namespace martingale;
+using namespace powermdg;
 
 namespace {
 
 /// Writes content to a temporary file and returns the path.
 std::string write_temp(char const* content) {
-    char path[] = "/tmp/martingale_test_XXXXXX";
+    char path[] = "/tmp/powermdg_test_XXXXXX";
     int fd = mkstemp(path);
     if (fd == -1) {
         std::fprintf(stderr, "mkstemp failed\n");

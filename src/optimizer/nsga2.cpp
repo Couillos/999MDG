@@ -6,7 +6,7 @@
 #include <numeric>
 #include <random>
 
-namespace martingale {
+namespace powermdg {
 
 // ---------------------------------------------------------------------------
 // Fast non-dominated sort  O(M * N^2)
@@ -373,4 +373,4 @@ std::vector<std::vector<double>> random_population(
     return pop;
 }
 
-} // namespace martingale
+} // namespace powermdg

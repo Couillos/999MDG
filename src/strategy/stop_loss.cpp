@@ -2,7 +2,7 @@
 #include <cmath>
 #include <cstdlib>
 
-namespace martingale {
+namespace powermdg {
 
 bool check_stop_loss(const Config& strat, const Candle& candle, Position& pos) {
     if (std::abs(pos.total_qty) < 1e-12) {
@@ -35,4 +35,4 @@ bool check_stop_loss(const Config& strat, const Candle& candle, Position& pos) {
     return true;
 }
 
-} // namespace martingale
+} // namespace powermdg

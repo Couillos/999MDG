@@ -1,7 +1,7 @@
-#ifndef MARTINGALE_METRICS_TYPES_H
-#define MARTINGALE_METRICS_TYPES_H
+#ifndef POWERMDG_METRICS_TYPES_H
+#define POWERMDG_METRICS_TYPES_H
 
-namespace martingale {
+namespace powermdg {
 
 /// All computed performance metrics for a backtest run.
 struct Metrics {
@@ -47,6 +47,6 @@ struct Metrics {
     double volume_pct_per_day_avg = 0.0;
 };
 
-} // namespace martingale
+} // namespace powermdg
 
-#endif // MARTINGALE_METRICS_TYPES_H
+#endif // POWERMDG_METRICS_TYPES_H

@@ -2,7 +2,7 @@
 #include <cmath>
 #include <cstddef>
 
-namespace martingale {
+namespace powermdg {
 
 double compute_parkinson_volatility(std::span<const Candle> candles,
                                     size_t current_idx, int span) {
@@ -31,4 +31,4 @@ double compute_parkinson_volatility(std::span<const Candle> candles,
     return std::sqrt(sum / denom);
 }
 
-} // namespace martingale
+} // namespace powermdg

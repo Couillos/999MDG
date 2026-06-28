@@ -1,10 +1,10 @@
-#ifndef MARTINGALE_DATA_SYMBOL_INFO_H
-#define MARTINGALE_DATA_SYMBOL_INFO_H
+#ifndef POWERMDG_DATA_SYMBOL_INFO_H
+#define POWERMDG_DATA_SYMBOL_INFO_H
 
 #include <string>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 
 /// Trading symbol information from the Binance exchange info endpoint.
 struct SymbolInfo {
@@ -18,6 +18,6 @@ struct SymbolInfo {
 /// Fetches symbol info, caching results locally.
 std::vector<SymbolInfo> fetch_symbol_info(const std::string& cache_dir);
 
-}  // namespace martingale
+}  // namespace powermdg
 
-#endif  // MARTINGALE_DATA_SYMBOL_INFO_H
+#endif  // POWERMDG_DATA_SYMBOL_INFO_H

@@ -1,7 +1,7 @@
 from conan import ConanFile
 
-class MartingaleConan(ConanFile):
-    name = "martingale"
+class PowermdgConan(ConanFile):
+    name = "powermdg"
     version = "1.0"
     settings = "os", "compiler", "build_type", "arch"
     generators = "CMakeToolchain", "CMakeDeps"

@@ -1,5 +1,5 @@
-#ifndef MARTINGALE_DATA_CACHE_H
-#define MARTINGALE_DATA_CACHE_H
+#ifndef POWERMDG_DATA_CACHE_H
+#define POWERMDG_DATA_CACHE_H
 
 #include "candle.h"
 #include "config/types.h"
@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 
 /// Holds mmap'd cache data; keep alive while using .candles span.
 struct CacheResult {
@@ -40,6 +40,6 @@ std::optional<CacheResult> try_load_cache(const std::string& hash);
 /// Writes candles to the cache file.
 void write_cache(const std::string& hash, const std::vector<Candle>& candles, size_t trading_start_idx);
 
-}  // namespace martingale
+}  // namespace powermdg
 
-#endif  // MARTINGALE_DATA_CACHE_H
+#endif  // POWERMDG_DATA_CACHE_H

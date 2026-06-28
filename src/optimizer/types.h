@@ -1,12 +1,12 @@
-#ifndef MARTINGALE_OPTIMIZER_TYPES_H
-#define MARTINGALE_OPTIMIZER_TYPES_H
+#ifndef POWERMDG_OPTIMIZER_TYPES_H
+#define POWERMDG_OPTIMIZER_TYPES_H
 
 #include "metrics/types.h"
 #include <map>
 #include <string>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 
 /// Result of a single parameter combination run during optimization.
 struct RunResult {
@@ -25,6 +25,6 @@ struct OptimizerResult {
     std::vector<RunResult> all_results;
 };
 
-} // namespace martingale
+} // namespace powermdg
 
-#endif // MARTINGALE_OPTIMIZER_TYPES_H
+#endif // POWERMDG_OPTIMIZER_TYPES_H

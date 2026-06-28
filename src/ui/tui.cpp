@@ -9,7 +9,7 @@
 #include <thread>
 #include <chrono>
 
-namespace martingale {
+namespace powermdg {
 
 /// Generate a unique short abbreviation for a parameter name.
 std::string param_abbrev(const std::string& name) {
@@ -221,7 +221,7 @@ void OptimizerTUI::draw_ui() {
 
     // Title
     attron(A_BOLD | COLOR_PAIR(1));
-    mvprintw(0, 0, "Martingale Optimizer  |  Gen: %zu/%zu  |  Pareto Front (%zu cand.)",
+    mvprintw(0, 0, "PowerMDG Optimizer  |  Gen: %zu/%zu  |  Pareto Front (%zu cand.)",
              completed, total_combos_, sorted.size());
     attroff(A_BOLD | COLOR_PAIR(1));
 
@@ -456,7 +456,7 @@ void run_watch_tui(const std::string& state_path) {
         erase();
 
         attron(A_BOLD | COLOR_PAIR(1));
-        mvprintw(0, 0, "Martingale Optimizer  |  Gen: %zu/%zu  |  %s",
+        mvprintw(0, 0, "PowerMDG Optimizer  |  Gen: %zu/%zu  |  %s",
                  completed, total, is_done ? "COMPLETED" : "Watching live state");
         attroff(A_BOLD | COLOR_PAIR(1));
 
@@ -544,4 +544,4 @@ void run_watch_tui(const std::string& state_path) {
     std::setvbuf(stdout, nullptr, _IOLBF, 1024);
 }
 
-} // namespace martingale
+} // namespace powermdg

@@ -1,6 +1,6 @@
-# Martingale — Grid Trading Backtest Engine
+# PowerMDG — Grid Trading Backtest Engine
 
-C++23 backtest/optimization engine for a martingale grid strategy on Binance futures.
+C++23 backtest/optimization engine for a power MDG grid strategy on Binance futures.
 
 ## Dependencies
 
@@ -24,24 +24,24 @@ cmake -B build -DCMAKE_CXX_COMPILER=clang++ \
 cmake --build build -j$(nproc)
 ```
 
-The binary is `build/src/martingale`.
+The binary is `build/src/powermdg`.
 
 ## Usage
 
 ```
-./build/src/martingale <backtest|optimize> <config.json> [--backtest-best]
+./build/src/powermdg <backtest|optimize> <config.json> [--backtest-best]
 ```
 
 ### Backtest
 
 ```bash
-./build/src/martingale backtest configs/template.json
+./build/src/powermdg backtest configs/template.json
 ```
 
 ### Optimizer (grid search) with live TUI
 
 ```bash
-./build/src/martingale optimize configs/template.json
+./build/src/powermdg optimize configs/template.json
 ```
 
 A real-time ncurses table shows the top 25 candidates during optimization. Press `q` to abort.
@@ -49,7 +49,7 @@ A real-time ncurses table shows the top 25 candidates during optimization. Press
 ### Optimize + backtest the best candidate
 
 ```bash
-./build/src/martingale optimize configs/template.json --backtest-best
+./build/src/powermdg optimize configs/template.json --backtest-best
 ```
 
 After optimization, the top-ranked candidate is automatically backtested with full output (charts, CSVs, analysis.json) in a `best/` subfolder.

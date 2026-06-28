@@ -1,12 +1,12 @@
-#ifndef MARTINGALE_STRATEGY_ENTRY_GRID_H
-#define MARTINGALE_STRATEGY_ENTRY_GRID_H
+#ifndef POWERMDG_STRATEGY_ENTRY_GRID_H
+#define POWERMDG_STRATEGY_ENTRY_GRID_H
 
 #include "config/types.h"
 #include "data/candle.h"
 #include "data/symbol_info.h"
 #include "strategy/types.h"
 
-namespace martingale {
+namespace powermdg {
 
 /// Processes entry conditions and opens / doubles-down positions.
 void process_entries(const Config& strat, const SymbolInfo& info,
@@ -15,6 +15,6 @@ void process_entries(const Config& strat, const SymbolInfo& info,
                      bool is_active, double ema,
                      int64_t current_tick);
 
-} // namespace martingale
+} // namespace powermdg
 
-#endif // MARTINGALE_STRATEGY_ENTRY_GRID_H
+#endif // POWERMDG_STRATEGY_ENTRY_GRID_H

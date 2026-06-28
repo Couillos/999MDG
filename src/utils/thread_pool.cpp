@@ -1,6 +1,6 @@
 #include "thread_pool.h"
 
-namespace martingale {
+namespace powermdg {
 
 ThreadPool::ThreadPool(int n_workers)
     : n_workers_(n_workers > 0 ? n_workers : static_cast<int>(std::thread::hardware_concurrency()))
@@ -51,4 +51,4 @@ void ThreadPool::wait() {
     cv_.wait(lock, [this]() { return tasks_.empty() && active_ == 0; });
 }
 
-} // namespace martingale
+} // namespace powermdg

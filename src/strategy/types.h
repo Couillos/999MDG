@@ -1,11 +1,11 @@
-#ifndef MARTINGALE_STRATEGY_TYPES_H
-#define MARTINGALE_STRATEGY_TYPES_H
+#ifndef POWERMDG_STRATEGY_TYPES_H
+#define POWERMDG_STRATEGY_TYPES_H
 
 #include <cstdint>
 #include <string>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 
 /// Current state of a single position (one symbol).
 struct Position {
@@ -38,6 +38,6 @@ struct BacktestResult {
     std::vector<double> position_durations_hours;
 };
 
-} // namespace martingale
+} // namespace powermdg
 
-#endif // MARTINGALE_STRATEGY_TYPES_H
+#endif // POWERMDG_STRATEGY_TYPES_H

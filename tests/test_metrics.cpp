@@ -5,7 +5,7 @@
 #include <gtest/gtest.h>
 #include <vector>
 
-using namespace martingale;
+using namespace powermdg;
 
 namespace {
 

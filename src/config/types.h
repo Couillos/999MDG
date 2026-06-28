@@ -1,12 +1,12 @@
-#ifndef MARTINGALE_CONFIG_TYPES_H
-#define MARTINGALE_CONFIG_TYPES_H
+#ifndef POWERMDG_CONFIG_TYPES_H
+#define POWERMDG_CONFIG_TYPES_H
 
 #include <array>
 #include <map>
 #include <string>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 
 /// Execution mode for the engine.
 enum class Mode {
@@ -89,6 +89,6 @@ struct Config {
     int warmup_candles;
 };
 
-}  // namespace martingale
+}  // namespace powermdg
 
-#endif  // MARTINGALE_CONFIG_TYPES_H
+#endif  // POWERMDG_CONFIG_TYPES_H

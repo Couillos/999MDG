@@ -3,7 +3,7 @@
 #include <cmath>
 #include <cstdlib>
 
-namespace martingale {
+namespace powermdg {
 namespace {
 
 double round_step(double val, double step) {
@@ -73,4 +73,4 @@ void process_closes(const Config& strat, const SymbolInfo& info,
     }
 }
 
-} // namespace martingale
+} // namespace powermdg

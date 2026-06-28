@@ -1,10 +1,10 @@
-#ifndef MARTINGALE_PLOT_COLORS_H
-#define MARTINGALE_PLOT_COLORS_H
+#ifndef POWERMDG_PLOT_COLORS_H
+#define POWERMDG_PLOT_COLORS_H
 
 #include <string>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 namespace plot {
 
 /// Dark theme colors for all charts.
@@ -35,6 +35,6 @@ inline std::string symbol_lc(size_t idx) {
 }
 
 } // namespace plot
-} // namespace martingale
+} // namespace powermdg
 
-#endif // MARTINGALE_PLOT_COLORS_H
+#endif // POWERMDG_PLOT_COLORS_H

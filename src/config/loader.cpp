@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 namespace {
 
 /// Fatal error: prints message and exits.
@@ -312,4 +312,4 @@ Config load_config(const std::string& path, Mode mode) {
     return cfg;
 }
 
-}  // namespace martingale
+}  // namespace powermdg

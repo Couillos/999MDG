@@ -1,5 +1,5 @@
-#ifndef MARTINGALE_OPTIMIZER_NSGA2_H
-#define MARTINGALE_OPTIMIZER_NSGA2_H
+#ifndef POWERMDG_OPTIMIZER_NSGA2_H
+#define POWERMDG_OPTIMIZER_NSGA2_H
 
 #include "config/types.h"
 #include "metrics/types.h"
@@ -9,7 +9,7 @@
 #include <functional>
 #include <random>
 
-namespace martingale {
+namespace powermdg {
 
 /// A single candidate solution in the GA population.
 struct Individual {
@@ -73,6 +73,6 @@ std::vector<std::vector<double>> random_population(
     std::mt19937_64& rng);
 
 
-} // namespace martingale
+} // namespace powermdg
 
 #endif

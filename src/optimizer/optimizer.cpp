@@ -18,7 +18,7 @@
 #include <vector>
 #include <zstd.h>
 
-namespace martingale {
+namespace powermdg {
 namespace {
 
 // ---------------------------------------------------------------------------
@@ -896,4 +896,4 @@ OptimizerResult run_optimization(
     return result;
 }
 
-} // namespace martingale
+} // namespace powermdg

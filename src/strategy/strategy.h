@@ -1,5 +1,5 @@
-#ifndef MARTINGALE_STRATEGY_STRATEGY_H
-#define MARTINGALE_STRATEGY_STRATEGY_H
+#ifndef POWERMDG_STRATEGY_STRATEGY_H
+#define POWERMDG_STRATEGY_STRATEGY_H
 
 #include "config/types.h"
 #include "data/candle_manager.h"
@@ -7,7 +7,7 @@
 #include "strategy/types.h"
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 
 /// Runs the full backtest over all symbols and returns the equity curve + positions.
 /// If output_dir is non-empty, writes CSV files (equity, exposure, PnL) during the loop.
@@ -16,6 +16,6 @@ BacktestResult run_backtest(const Config& cfg,
                             const std::vector<SymbolInfo>& symbols_info,
                             const std::string& output_dir = "");
 
-} // namespace martingale
+} // namespace powermdg
 
-#endif // MARTINGALE_STRATEGY_STRATEGY_H
+#endif // POWERMDG_STRATEGY_STRATEGY_H

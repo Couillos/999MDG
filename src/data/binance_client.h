@@ -1,5 +1,5 @@
-#ifndef MARTINGALE_DATA_BINANCE_CLIENT_H
-#define MARTINGALE_DATA_BINANCE_CLIENT_H
+#ifndef POWERMDG_DATA_BINANCE_CLIENT_H
+#define POWERMDG_DATA_BINANCE_CLIENT_H
 
 #include "candle.h"
 #include <cstdint>
@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 
 /// Minimal HTTP client for the Binance REST API using libcurl.
 class BinanceClient {
@@ -39,6 +39,6 @@ private:
     void throttle();
 };
 
-}  // namespace martingale
+}  // namespace powermdg
 
-#endif  // MARTINGALE_DATA_BINANCE_CLIENT_H
+#endif  // POWERMDG_DATA_BINANCE_CLIENT_H

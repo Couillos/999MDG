@@ -10,7 +10,7 @@
 #include <map>
 #include <zstd.h>
 
-namespace martingale {
+namespace powermdg {
 namespace {
 
 // ── Date/time utilities ────────────────────────────────────────────────────
@@ -358,4 +358,4 @@ LoadedCandles load_candles(const Config& cfg) {
     return {std::move(all_candles), trading_start};
 }
 
-}  // namespace martingale
+}  // namespace powermdg

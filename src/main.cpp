@@ -24,7 +24,7 @@
 #include <unistd.h>
 #include <vector>
 
-using namespace martingale;
+using namespace powermdg;
 
 // ============================================================================
 // Constants
@@ -320,10 +320,13 @@ static bool read_best_from_latest_opti(std::map<std::string, double>& out_params
         }
     }
 
-    // Fallback: try .live_state in the latest dir
-    std::string const live_path = latest + "/.live_state";
+    // Fallback: try .live_state in the latest dir, then root
+    std::string live_path = latest + "/.live_state";
     simdjson::padded_string j;
-    if (simdjson::padded_string::load(live_path).get(j)) return false;
+    if (simdjson::padded_string::load(live_path).get(j)) {
+        live_path = std::string(OPT_DIR) + "/.live_state";
+        if (simdjson::padded_string::load(live_path).get(j)) return false;
+    }
     simdjson::ondemand::parser p;
     simdjson::ondemand::document doc;
     if (p.iterate(j).get(doc)) return false;
@@ -518,7 +521,7 @@ int main(int argc, char** argv) {
 
     // ── Standalone --backtest-best (no config needed) ──────────────────────
     if (argc >= 2 && std::strcmp(argv[1], "--backtest-best") == 0) {
-        std::printf("Martingale v1.0\n");
+        std::printf("PowerMDG v1.0\n");
         std::printf("  Mode: --backtest-best (no config, uses latest optimization)\n");
 
         std::map<std::string, double> best_params;
@@ -608,7 +611,7 @@ int main(int argc, char** argv) {
 
     Config const cfg = load_config(config_path, mode);
 
-    std::printf("Martingale v1.0\n");
+    std::printf("PowerMDG v1.0\n");
     std::printf("  Mode:     %s\n", mode_str(cfg.mode));
     std::printf("  Symbols:  ");
     for (size_t i = 0; i < cfg.symbols.size(); ++i) {

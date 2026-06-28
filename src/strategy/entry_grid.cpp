@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-namespace martingale {
+namespace powermdg {
 namespace {
 
 /// Rounds a value down to the nearest step.
@@ -108,4 +108,4 @@ void process_entries(const Config& strat, const SymbolInfo& info,
     }
 }
 
-} // namespace martingale
+} // namespace powermdg

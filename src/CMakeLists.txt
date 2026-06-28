@@ -1,4 +1,4 @@
-set(MARTINGALE_SOURCES
+set(POWERMDG_SOURCES
     config/loader.cpp
     data/binance_client.cpp
     data/symbol_info.cpp
@@ -18,38 +18,38 @@ set(MARTINGALE_SOURCES
     ui/tui.cpp
 )
 
-add_library(martingale_lib STATIC
-    ${MARTINGALE_SOURCES}
+add_library(powermdg_lib STATIC
+    ${POWERMDG_SOURCES}
 )
 
-target_link_libraries(martingale_lib PUBLIC
+target_link_libraries(powermdg_lib PUBLIC
     simdjson::simdjson
     PkgConfig::CURL
     zstd::libzstd_static
     ${CURSES_LIBRARIES}
 )
 
-target_include_directories(martingale_lib PUBLIC
+target_include_directories(powermdg_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CURSES_INCLUDE_DIRS}
 )
 
 # Apply strict warn flags to the library (was previously only on the exe — audit issue #2)
-target_compile_options(martingale_lib PUBLIC
-    ${MARTINGALE_WARN_FLAGS}
+target_compile_options(powermdg_lib PUBLIC
+    ${POWERMDG_WARN_FLAGS}
 )
 
 # Strict flags (no-rtti, no-exceptions) applied as PRIVATE so tests can override
-target_compile_options(martingale_lib PRIVATE
-    ${MARTINGALE_STRICT_FLAGS}
+target_compile_options(powermdg_lib PRIVATE
+    ${POWERMDG_STRICT_FLAGS}
 )
 
-add_executable(martingale
+add_executable(powermdg
     main.cpp
 )
 
-target_link_libraries(martingale PRIVATE
-    martingale_lib
+target_link_libraries(powermdg PRIVATE
+    powermdg_lib
 )
 
-target_include_directories(martingale PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(powermdg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

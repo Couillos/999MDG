@@ -9,7 +9,7 @@
 #include <string_view>
 #include <thread>
 
-namespace martingale {
+namespace powermdg {
 namespace {
 
 /// Base URL for the Binance REST API.
@@ -102,7 +102,7 @@ std::optional<std::string> BinanceClient::http_get(const std::string& url) {
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "martingale/1.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "powermdg/1.0");
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
 
     CURLcode res = curl_easy_perform(curl);
@@ -240,4 +240,4 @@ std::optional<std::string> BinanceClient::fetch_exchange_info() {
     return http_get(url);
 }
 
-}  // namespace martingale
+}  // namespace powermdg

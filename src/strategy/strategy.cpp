@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 namespace {
 
 /// Computes the next EMA value iteratively.
@@ -304,4 +304,4 @@ BacktestResult run_backtest(const Config& cfg,
     return result;
 }
 
-} // namespace martingale
+} // namespace powermdg

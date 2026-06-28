@@ -5,7 +5,7 @@
 #include <numeric>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 namespace {
 
 /// Extracts one equity value per day (last snapshot of each UTC day).
@@ -471,4 +471,4 @@ Metrics compute_metrics(const BacktestResult& result,
     return m;
 }
 
-} // namespace martingale
+} // namespace powermdg

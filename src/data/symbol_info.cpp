@@ -10,7 +10,7 @@
 #include <simdjson.h>
 #include <sys/stat.h>
 
-namespace martingale {
+namespace powermdg {
 namespace {
 
 /// Checks whether a file is older than 24 hours.
@@ -172,4 +172,4 @@ std::vector<SymbolInfo> fetch_symbol_info(const std::string& cache_dir) {
     return infos;
 }
 
-}  // namespace martingale
+}  // namespace powermdg

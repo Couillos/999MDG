@@ -3,7 +3,7 @@
 #include <cmath>
 #include <cstdlib>
 
-namespace martingale {
+namespace powermdg {
 
 bool check_time_based_unstuck(const Config& strat, const Candle& candle,
                                Position& pos, size_t /*current_tick*/) {
@@ -72,4 +72,4 @@ bool check_time_based_unstuck(const Config& strat, const Candle& candle,
     return total_closed > 0.0;
 }
 
-} // namespace martingale
+} // namespace powermdg

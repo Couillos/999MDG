@@ -1,5 +1,5 @@
-#ifndef MARTINGALE_UTILS_THREAD_POOL_H
-#define MARTINGALE_UTILS_THREAD_POOL_H
+#ifndef POWERMDG_UTILS_THREAD_POOL_H
+#define POWERMDG_UTILS_THREAD_POOL_H
 
 #include <condition_variable>
 #include <deque>
@@ -8,7 +8,7 @@
 #include <thread>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 
 /// Fixed-size thread pool with a central task queue and condition-variable synchronization.
 class ThreadPool {
@@ -48,6 +48,6 @@ private:
     void worker_loop();
 };
 
-} // namespace martingale
+} // namespace powermdg
 
-#endif // MARTINGALE_UTILS_THREAD_POOL_H
+#endif // POWERMDG_UTILS_THREAD_POOL_H

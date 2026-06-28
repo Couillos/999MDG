@@ -1,9 +1,9 @@
-#ifndef MARTINGALE_DATA_CANDLE_H
-#define MARTINGALE_DATA_CANDLE_H
+#ifndef POWERMDG_DATA_CANDLE_H
+#define POWERMDG_DATA_CANDLE_H
 
 #include <cstdint>
 
-namespace martingale {
+namespace powermdg {
 
 /// OHLCV candle aligned to 64 bytes for cache-line efficiency.
 struct alignas(64) Candle {
@@ -11,6 +11,6 @@ struct alignas(64) Candle {
     double open, high, low, close, volume;
 };
 
-}  // namespace martingale
+}  // namespace powermdg
 
-#endif  // MARTINGALE_DATA_CANDLE_H
+#endif  // POWERMDG_DATA_CANDLE_H

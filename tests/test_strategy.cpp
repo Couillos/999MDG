@@ -11,7 +11,7 @@
 #include <vector>
 #include <gtest/gtest.h>
 
-using namespace martingale;
+using namespace powermdg;
 
 namespace {
 

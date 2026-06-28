@@ -10,7 +10,7 @@
 #include <system_error>
 #include <unistd.h>
 
-namespace martingale {
+namespace powermdg {
 namespace {
 
 /// Rotate left helper.
@@ -263,4 +263,4 @@ void write_cache(const std::string& hash, const std::vector<Candle>& candles, si
     std::fclose(f);
 }
 
-}  // namespace martingale
+}  // namespace powermdg

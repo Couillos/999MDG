@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <vector>
 
-using namespace martingale;
+using namespace powermdg;
 
 int main() {
     // 4 individuals, 2 objectives (minimize).

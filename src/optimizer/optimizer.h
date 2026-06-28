@@ -1,5 +1,5 @@
-#ifndef MARTINGALE_OPTIMIZER_OPTIMIZER_H
-#define MARTINGALE_OPTIMIZER_OPTIMIZER_H
+#ifndef POWERMDG_OPTIMIZER_OPTIMIZER_H
+#define POWERMDG_OPTIMIZER_OPTIMIZER_H
 
 #include "config/types.h"
 #include "data/candle_manager.h"
@@ -8,7 +8,7 @@
 #include <functional>
 #include <vector>
 
-namespace martingale {
+namespace powermdg {
 
 /// Callback invoked after each generation is evaluated.
 /// Receives the best RunResult of the generation, current generation index, and total generations.
@@ -30,6 +30,6 @@ OptimizerResult run_optimization(
     const std::string& live_state_path = ""
 );
 
-} // namespace martingale
+} // namespace powermdg
 
-#endif // MARTINGALE_OPTIMIZER_OPTIMIZER_H
+#endif // POWERMDG_OPTIMIZER_OPTIMIZER_H

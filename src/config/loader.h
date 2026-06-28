@@ -1,14 +1,14 @@
-#ifndef MARTINGALE_CONFIG_LOADER_H
-#define MARTINGALE_CONFIG_LOADER_H
+#ifndef POWERMDG_CONFIG_LOADER_H
+#define POWERMDG_CONFIG_LOADER_H
 
 #include "types.h"
 #include <string>
 
-namespace martingale {
+namespace powermdg {
 
 /// Loads and validates a JSON config file, returns a fully populated Config struct.
 Config load_config(const std::string& path, Mode mode);
 
-}  // namespace martingale
+}  // namespace powermdg
 
-#endif  // MARTINGALE_CONFIG_LOADER_H
+#endif  // POWERMDG_CONFIG_LOADER_H

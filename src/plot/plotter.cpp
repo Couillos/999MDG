@@ -8,7 +8,7 @@
 #include <numeric>
 #include <string>
 
-namespace martingale {
+namespace powermdg {
 
 namespace {
 
@@ -262,4 +262,4 @@ void Plotter::generate_all() {
     pnl_per_symbol_chart();
 }
 
-} // namespace martingale
+} // namespace powermdg
