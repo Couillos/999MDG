@@ -128,6 +128,18 @@ void apply_param_to_cfg(Config& cfg, const std::string& name, double value) {
     } else if (name == "time_based_unstuck_pct") {
         cfg.strategy.time_based_unstuck_pct = value;
     } else if (name == "time_based_unstuck_age") {
+    } else if (name == "bb_std_mult") {
+        cfg.strategy.bb_std_mult = value;
+    } else if (name == "bb_min_bandwidth_pct") {
+        cfg.strategy.bb_min_bandwidth_pct = value;
+    } else if (name == "linear_step") {
+        cfg.strategy.linear_step = value;
+    } else if (name == "revert_close_frac") {
+        cfg.strategy.revert_close_frac = value;
+    } else if (name == "overshoot_pct") {
+        cfg.strategy.overshoot_pct = value;
+    } else if (name == "tp_min_upnl_pct") {
+        cfg.strategy.tp_min_upnl_pct = value;
         cfg.strategy.time_based_unstuck_age = static_cast<int>(value);
     }
 }

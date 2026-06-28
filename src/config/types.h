@@ -40,6 +40,18 @@ struct StrategyParams {
     double maker_fee_pct;
     double time_based_unstuck_pct;
     int time_based_unstuck_age;
+
+    // --- bb_reversion entry_condition params ---
+    double bb_std_mult;
+    double bb_min_bandwidth_pct;
+
+    // --- dca_linear entries_algo params ---
+    double linear_step;
+
+    // --- mean_revert_tp closes_algo params ---
+    double revert_close_frac;
+    double overshoot_pct;
+    double tp_min_upnl_pct;
 };
 
 /// Output redirection config.

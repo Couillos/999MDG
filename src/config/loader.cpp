@@ -69,13 +69,13 @@ double opt_f64(simdjson::ondemand::object obj, const char* name, double def) {
 
 /// Known methods for each module type.
 bool is_valid_entry_condition(const std::string& method) {
-    return method == "ema_dist_pct";
+    return method == "ema_dist_pct" || method == "bb_reversion";
 }
 bool is_valid_entries_algo(const std::string& method) {
-    return method == "martingale";
+    return method == "martingale" || method == "dca_linear";
 }
 bool is_valid_closes_algo(const std::string& method) {
-    return method == "simple_grid";
+    return method == "simple_grid" || method == "mean_revert_tp";
 }
 
 /// Returns the set of parameter names that each module method uses.
@@ -84,17 +84,26 @@ std::vector<std::string> params_for_entry_condition(const std::string& method) {
     if (method == "ema_dist_pct") {
         return {"entry_ema_period", "entry_ema_distance_pct"};
     }
+    if (method == "bb_reversion") {
+        return {"entry_ema_period", "bb_std_mult", "bb_min_bandwidth_pct"};
+    }
     return {};
 }
 std::vector<std::string> params_for_entries_algo(const std::string& method) {
     if (method == "martingale") {
         return {"entry_grid_spacing_pct", "double_down_factor"};
     }
+    if (method == "dca_linear") {
+        return {"entry_grid_spacing_pct", "linear_step"};
+    }
     return {};
 }
 std::vector<std::string> params_for_closes_algo(const std::string& method) {
     if (method == "simple_grid") {
         return {"close_grid_spacing_pct", "close_grid_count"};
+    }
+    if (method == "mean_revert_tp") {
+        return {"revert_close_frac", "overshoot_pct", "tp_min_upnl_pct"};
     }
     return {};
 }
@@ -171,12 +180,23 @@ std::string parse_module(simdjson::ondemand::object parent, const char* module_n
         if (method == "ema_dist_pct") {
             sp.entry_ema_period       = static_cast<int>(req_u64(params_obj, "entry_ema_period"));
             sp.entry_ema_distance_pct = req_f64(params_obj, "entry_ema_distance_pct");
+        } else if (method == "bb_reversion") {
+            sp.entry_ema_period     = static_cast<int>(req_u64(params_obj, "entry_ema_period"));
+            sp.bb_std_mult          = req_f64(params_obj, "bb_std_mult");
+            sp.bb_min_bandwidth_pct = req_f64(params_obj, "bb_min_bandwidth_pct");
         } else if (method == "martingale") {
             sp.entry_grid_spacing_pct = req_f64(params_obj, "entry_grid_spacing_pct");
             sp.double_down_factor     = req_f64(params_obj, "double_down_factor");
+        } else if (method == "dca_linear") {
+            sp.entry_grid_spacing_pct = req_f64(params_obj, "entry_grid_spacing_pct");
+            sp.linear_step            = req_f64(params_obj, "linear_step");
         } else if (method == "simple_grid") {
             sp.close_grid_spacing_pct = req_f64(params_obj, "close_grid_spacing_pct");
             sp.close_grid_count       = static_cast<int>(req_u64(params_obj, "close_grid_count"));
+        } else if (method == "mean_revert_tp") {
+            sp.revert_close_frac = req_f64(params_obj, "revert_close_frac");
+            sp.overshoot_pct     = req_f64(params_obj, "overshoot_pct");
+            sp.tp_min_upnl_pct   = req_f64(params_obj, "tp_min_upnl_pct");
         }
         return method;
     }
@@ -483,18 +503,35 @@ Config load_config(const std::string& path, Mode mode) {
     {
         auto strat_obj = req_obj(root, "strategy");
         cfg.strategy = parse_strategy(strat_obj);
-        // validate strategy param ranges
+        // validate common strategy param ranges
         if (cfg.strategy.entry_ema_period < 2) fatal("entry_ema_period must be >= 2");
-        if (cfg.strategy.entry_ema_distance_pct < 0.0) fatal("entry_ema_distance_pct must be >= 0");
         if (cfg.strategy.entry_grid_spacing_pct < 0.0) fatal("entry_grid_spacing_pct must be >= 0");
         if (cfg.strategy.initial_qty_pct < 0.0 || cfg.strategy.initial_qty_pct > 1.0) fatal("initial_qty_pct must be in [0, 1]");
-        if (cfg.strategy.double_down_factor < 0.0) fatal("double_down_factor must be >= 0");
-        if (cfg.strategy.close_grid_spacing_pct < 0.0) fatal("close_grid_spacing_pct must be >= 0");
-        if (cfg.strategy.close_grid_count < 1) fatal("close_grid_count must be >= 1");
         if (cfg.strategy.sl_upnl_pct > 0.0) fatal("sl_upnl_pct must be <= 0");
         if (cfg.strategy.n_positions < 1) fatal("n_positions must be >= 1");
         if (cfg.strategy.parkinson_volatility_span < 2) fatal("parkinson_volatility_span must be >= 2");
         if (cfg.strategy.maker_fee_pct < 0.0 || cfg.strategy.maker_fee_pct > 1.0) fatal("maker_fee_pct must be in [0, 1]");
+        if (cfg.strategy.entry_condition_type == "ema_dist_pct") {
+            if (cfg.strategy.entry_ema_distance_pct < 0.0) fatal("entry_ema_distance_pct must be >= 0");
+        }
+        if (cfg.strategy.entry_condition_type == "bb_reversion") {
+            if (cfg.strategy.bb_std_mult < 0.5) fatal("bb_std_mult must be >= 0.5");
+            if (cfg.strategy.bb_min_bandwidth_pct < 0.0) fatal("bb_min_bandwidth_pct must be >= 0");
+        }
+        if (cfg.strategy.entries_algo_type == "martingale") {
+            if (cfg.strategy.double_down_factor < 0.0) fatal("double_down_factor must be >= 0");
+        }
+        if (cfg.strategy.entries_algo_type == "dca_linear") {
+            if (cfg.strategy.linear_step < 0.0) fatal("linear_step must be >= 0");
+        }
+        if (cfg.strategy.closes_algo_type == "simple_grid") {
+            if (cfg.strategy.close_grid_spacing_pct < 0.0) fatal("close_grid_spacing_pct must be >= 0");
+            if (cfg.strategy.close_grid_count < 1) fatal("close_grid_count must be >= 1");
+        }
+        if (cfg.strategy.closes_algo_type == "mean_revert_tp") {
+            if (cfg.strategy.revert_close_frac < 0.0 || cfg.strategy.revert_close_frac > 1.0) fatal("revert_close_frac must be in [0, 1]");
+            if (cfg.strategy.overshoot_pct < 0.0) fatal("overshoot_pct must be >= 0");
+        }
     }
 
     // optimize (only parse in OPTIMIZE mode to avoid wasted work)

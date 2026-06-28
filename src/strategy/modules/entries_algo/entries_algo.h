@@ -37,6 +37,7 @@ public:
 
     /// Returns the name of this entries algorithm (e.g. "martingale").
     virtual std::string name() const = 0;
+    virtual DataNeed data_needs() const { return DataNeed::None; }
 };
 
 /// Factory: creates an entries algorithm by name.

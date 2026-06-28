@@ -236,6 +236,19 @@ static void apply_params_to_cfg(Config& cfg, const std::map<std::string, double>
             cfg.strategy.time_based_unstuck_age = static_cast<int>(v);
         else if (k == "total_wallet_exposure")
             cfg.total_wallet_exposure = v;
+        else if (k == "bb_std_mult")
+            cfg.strategy.bb_std_mult = v;
+        else if (k == "bb_min_bandwidth_pct")
+            cfg.strategy.bb_min_bandwidth_pct = v;
+        else if (k == "linear_step")
+            cfg.strategy.linear_step = v;
+        else if (k == "revert_close_frac")
+            cfg.strategy.revert_close_frac = v;
+        else if (k == "overshoot_pct")
+            cfg.strategy.overshoot_pct = v;
+        else if (k == "tp_min_upnl_pct")
+            cfg.strategy.tp_min_upnl_pct = v;
+            cfg.total_wallet_exposure = v;
     }
     // Don't recompute warmup_candles here — keep whatever was set by the caller.
     // In OPTIMIZE mode, warmup_candles was set to max_warmup from bounds (matching

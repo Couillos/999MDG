@@ -24,6 +24,7 @@ class EmaDistPctEntryCondition : public IEntryCondition {
 public:
     bool should_enter(const ModuleContext& ctx) const override;
     std::string name() const override { return "ema_dist_pct"; }
+    DataNeed data_needs() const override { return DataNeed::Ema; }
 };
 
 } // namespace powermdg

@@ -31,6 +31,7 @@ public:
 
     /// Returns the name of this entry condition (e.g. "ema_dist_pct").
     virtual std::string name() const = 0;
+    virtual DataNeed data_needs() const { return DataNeed::None; }
 };
 
 /// Factory: creates an entry condition by name.

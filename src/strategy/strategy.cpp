@@ -115,14 +115,27 @@ BacktestResult run_backtest(const Config& cfg,
         return {};
     }
 
+    // Aggregate data needs — only compute indicators that at least one active module requires
+    DataNeed const needs = entry_condition->data_needs() | entries_algo->data_needs() | closes_algo->data_needs();
+    bool const need_ema = powermdg::needs(needs, DataNeed::Ema) || powermdg::needs(needs, DataNeed::RollingStdev);
+    bool const need_stdev = powermdg::needs(needs, DataNeed::RollingStdev);
+    bool const need_candles = powermdg::needs(needs, DataNeed::CandleSeries);
+
     // Per-symbol state
     std::vector<Position> positions(n, Position{});
-    std::vector<double> ema_values(n, 0.0);
-    double const alpha = 2.0 / (static_cast<double>(cfg.strategy.entry_ema_period) + 1.0);
-
-    // Initialize EMAs with the first candle close of each symbol
-    for (size_t s = 0; s < n; ++s) {
-        ema_values[s] = per_symbol_candles[s].candles[0].close;
+    std::vector<double> ema_values;
+    std::vector<double> ema_sq_values;
+    std::vector<double> stdev_values;
+    double alpha = 0.0;
+    if (need_ema) {
+        ema_values.resize(n, 0.0);
+        alpha = 2.0 / (static_cast<double>(cfg.strategy.entry_ema_period) + 1.0);
+        for (size_t s = 0; s < n; ++s) ema_values[s] = per_symbol_candles[s].candles[0].close;
+    }
+    if (need_stdev) {
+        ema_sq_values.resize(n, 0.0);
+        stdev_values.resize(n, 0.0);
+        for (size_t s = 0; s < n; ++s) ema_sq_values[s] = per_symbol_candles[s].candles[0].close * per_symbol_candles[s].candles[0].close;
     }
 
     // CSV output (written during the loop if output_dir is set)
@@ -176,9 +189,14 @@ BacktestResult run_backtest(const Config& cfg,
             prev_entry_ts[s] = positions[s].entry_timestamp_ms;
         }
 
-        // Update iterative EMA
+        // Update iterative EMA and EMA of close² (only if modules need them)
         for (size_t s = 0; s < n; ++s) {
-            ema_values[s] = next_ema(alpha, current_candles[s]->close, ema_values[s]);
+            double const close = current_candles[s]->close;
+            if (need_ema) ema_values[s] = next_ema(alpha, close, ema_values[s]);
+            if (need_stdev) {
+                ema_sq_values[s] = next_ema(alpha, close * close, ema_sq_values[s]);
+                stdev_values[s] = std::sqrt(std::max(0.0, ema_sq_values[s] - ema_values[s] * ema_values[s]));
+            }
         }
 
         // Skip warmup period
@@ -208,9 +226,11 @@ BacktestResult run_backtest(const Config& cfg,
         // Ask closes_algo for close orders, then execute them.
         for (size_t s = 0; s < n; ++s) {
             if (positions[s].total_qty > 1e-12) {
+                double const rstd = need_stdev ? stdev_values[s] : 0.0;
                 ModuleContext ctx{cfg, symbols_info[s], *current_candles[s],
-                                  positions[s], balance, is_active[s],
-                                  static_cast<int64_t>(i), ema_values[s]};
+                                  positions[s], balance, static_cast<int64_t>(i),
+                                  need_ema ? ema_values[s] : 0.0, rstd,
+                                  need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{}};
                 auto close_orders = closes_algo->compute_closes(ctx);
                 for (auto const& co : close_orders) {
                     execute_close(positions[s], co, *current_candles[s], cfg);
@@ -246,9 +266,11 @@ BacktestResult run_backtest(const Config& cfg,
                 / static_cast<double>(cfg.strategy.n_positions);
 
             // Build context once (used for both entry_condition and entries_algo)
+            double const rstd2 = need_stdev ? stdev_values[s] : 0.0;
             ModuleContext ctx{cfg, symbols_info[s], *current_candles[s],
-                              positions[s], balance, is_active[s],
-                              static_cast<int64_t>(i), ema_values[s]};
+                              positions[s], balance, static_cast<int64_t>(i),
+                              need_ema ? ema_values[s] : 0.0, rstd2,
+                              need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{}};
 
             // Check entry condition for BOTH first entry and double-down
             // (matches original behavior: EMA check was before the branch)

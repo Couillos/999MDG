@@ -30,6 +30,7 @@ public:
 
     /// Returns the name of this closes algorithm (e.g. "simple_grid").
     virtual std::string name() const = 0;
+    virtual DataNeed data_needs() const { return DataNeed::None; }
 };
 
 /// Factory: creates a closes algorithm by name.
