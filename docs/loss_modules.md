@@ -23,7 +23,8 @@ Exits when UPnL ≤ `sl_upnl_pct`. Uses `sl_upnl_pct` from strategy level.
 Progressive close after `time_based_unstuck_age` hours. Uses strategy-level params.
 
 ### `z_stop` — Z-score stop
-Exits when |Z| > threshold. Z = (close − VWAP) / stdev, computed from candle series.
+Exits when |Z| > threshold. Z = (close − VWAP) / stdev.
+VWAP and stdev are pre-computed once per tick and passed via ModuleContext.
 
 | Parameter | Type | Description | Example |
 |-----------|------|-------------|---------|

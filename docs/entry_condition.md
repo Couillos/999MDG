@@ -14,6 +14,7 @@ Params: `entry_ema_period`, `bb_std_mult`, `bb_min_bandwidth_pct`
 
 ### `zscore_ou` — Z-score Ornstein-Uhlenbeck (mean-reversion)
 Enters when Z ≤ −threshold, where Z = (close − VWAP) / stdev.
-VWAP and stdev computed from candle_series. ATR regime filter on HTF candles.
+VWAP and stdev are pre-computed once per tick and passed via ModuleContext.
+ATR regime filter on HTF candles.
 Params: `zscore_entry_threshold`, `zscore_vwap_lookback`, `atr_period`, `atr_filter_mult`
 DataNeeds: CandleSeries + HtfCandles

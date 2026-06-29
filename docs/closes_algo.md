@@ -16,5 +16,6 @@ Params: `revert_close_frac`, `overshoot_pct`, `tp_min_upnl_pct`
 TP1: close tp1_frac when |Z| ≤ tp1_z_threshold.
 TP2: close tp2_frac when |Z| ≤ tp2_z_threshold.
 TP3: trailing ATR on remaining.
+VWAP and stdev are pre-computed once per tick and passed via ModuleContext.
 Params: `tp1_z_threshold`, `tp1_frac`, `tp2_z_threshold`, `tp2_frac`, `trailing_atr_mult`
 DataNeeds: CandleSeries + HtfCandles

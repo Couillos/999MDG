@@ -1,6 +1,7 @@
 # PowerMDG — Grid Trading Backtest Engine
 
 C++23 backtest/optimization engine for a power MDG grid strategy on Binance futures.
+Supports multi-timeframe indicators (HTF candles for ATR, Parkinson volatility).
 
 ## Dependencies
 
@@ -38,7 +39,7 @@ The binary is `build/src/powermdg`.
 ./build/src/powermdg backtest configs/template.json
 ```
 
-### Optimizer (grid search) with live TUI
+### Optimizer (NSGA-II) with live TUI
 
 ```bash
 ./build/src/powermdg optimize configs/template.json
