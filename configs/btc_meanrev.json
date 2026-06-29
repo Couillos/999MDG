@@ -4,7 +4,7 @@
   "date_from": "2021-07-01",
   "date_to": "2025-01-31",
   "initial_balance_usd": 10000.0,
-  "total_wallet_exposure": 1.0,
+  "total_wallet_exposure": 10.0,
   "strategy": {
     "entry_condition": {
       "zscore_ou": {
@@ -40,16 +40,17 @@
     "maker_fee_pct": 0.001
   },
   "optimize": {
-    "n_workers": 10,
+    "n_workers": 14,
     "max_iterations": 100000,
     "limits": {
-      "drawdown_worst": {"max": 0.5},
-      "position_held_hours_max": {"max": 1250},
-      "peak_recovery_hours_equity_usd": {"max": 1250}
+	"drawdown_worst": {"max": 0.6},
+	"loss_profit_ratio": {"min": 1.0},
+	"position_held_hours_max": {"max": 1250},
+	"peak_recovery_hours_equity_usd": {"max": 2500},
+	"mdg_usd": {"min": 0.00001}
     },
     "scoring": [
 	{"metric": "sharpe_ratio_usd", "goal": "max", "weight": 1.0},
-	{"metric": "calmar_ratio_usd", "goal": "max", "weight": 1.0},
 	{"metric": "mdg_usd", "goal": "max", "weight": 1.0}
     ],
     "ga": {
@@ -71,7 +72,7 @@
       },
       "entries_algo": {
         "martingale": {
-          "entry_grid_spacing_pct": [0.005, 0.03, 0.005],
+          "entry_grid_spacing_pct": [0.01, 0.03, 0.001],
           "double_down_factor": [0.3, 1.0, 0.1]
         }
       },
@@ -90,12 +91,12 @@
           "atr_period": ["1h", 5, 30, 1],
           "atr_stop_mult": [1.0, 4.0, 0.5]
         },
-        "time_stop": { "time_stop_hours": [2.0, 8.0, 1.0] }
+        "time_stop": { "time_stop_hours": [2.0, 168.0, 1.0] }
       },
-      "initial_qty_pct": [0.005, 0.02, 0.005],
+      "initial_qty_pct": [0.005, 0.05, 0.001],
       "n_positions": [1, 5, 1],
-      "parkinson_volatility_span": [5, 30, 1],
-      "maker_fee_pct": [0.0, 0.005, 0.0005]
+      "parkinson_volatility_span": [5, 5, 1],
+      "maker_fee_pct": [0.0015, 0.0015]
     }
   },
   "output": {"dir": "results"}
