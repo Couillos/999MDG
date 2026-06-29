@@ -427,8 +427,10 @@ static void backtest_and_report(Config cfg, const std::string& res_dir) {
                 loaded.candles.size(), loaded.candles.size() / n_sym,
                 loaded.trading_start_idx);
 
+    auto const mtf_data = load_all_mtf_candles(cfg);
+
     std::printf("Running backtest...\n");
-    BacktestResult const result = run_backtest(cfg, per_symbol, symbols_info, res_dir);
+    BacktestResult const result = run_backtest(cfg, per_symbol, symbols_info, res_dir, &mtf_data);
     std::printf("  Equity curve points: %zu\n", result.equity_curve.size());
 
     std::printf("Computing metrics...\n");
@@ -514,6 +516,8 @@ static void run_optimize(Config const& cfg_in, bool backtest_best) {
                 loaded.candles.size(), loaded.candles.size() / n_sym,
                 loaded.trading_start_idx);
 
+    auto const mtf_data = load_all_mtf_candles(cfg);
+
     std::printf("Running optimization...\n");
 
     // Progress is printed to stdout. A separate '--tui' command can be run in
@@ -533,7 +537,7 @@ static void run_optimize(Config const& cfg_in, bool backtest_best) {
 
     std::string results_path = res_dir + "/results";
     OptimizerResult const opt_result = run_optimization(
-        cfg, per_symbol, symbols_info, results_path, opt_callback, live_state);
+        cfg, per_symbol, symbols_info, mtf_data, results_path, opt_callback, live_state);
 
     std::printf("\n");
 

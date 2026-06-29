@@ -321,13 +321,14 @@ Individual evaluate_individual(
     const std::vector<ParamAxis>& axes,
     const std::map<std::string, Limit>& limits,
     const std::vector<double>& genes,
-    int generation)
+    int generation,
+    const std::map<std::string, std::vector<LoadedCandles>>* mtf_candles = nullptr)
 {
     Individual ind;
     ind.genes = genes;
     ind.generation = generation;
     ind.config = make_config_from_genes(base_cfg, axes, genes);
-    auto const bt = run_backtest(ind.config, per_symbol_candles, symbols_info, "");
+    auto const bt = run_backtest(ind.config, per_symbol_candles, symbols_info, "", mtf_candles);
     ind.metrics = compute_metrics(bt, ind.config);
     ind.constraint_violation = compute_total_penalty(ind.metrics, limits);
     return ind;
@@ -772,6 +773,7 @@ OptimizerResult run_optimization(
     const Config& cfg,
     const std::vector<LoadedCandles>& per_symbol_candles,
     const std::vector<SymbolInfo>& symbols_info,
+    const std::map<std::string, std::vector<LoadedCandles>>& mtf_candles,
     const std::string& results_path,
     OptimizerCallback callback,
     const std::string& live_state_path)
@@ -864,7 +866,7 @@ OptimizerResult run_optimization(
                     if (idx >= population.size()) break;
                     population[idx] = evaluate_individual(
                         base_cfg, per_symbol_candles, symbols_info, axes, limits,
-                        gene_pop[idx], 0);
+                        gene_pop[idx], 0, &mtf_candles);
                 }
             });
         }
@@ -919,7 +921,7 @@ OptimizerResult run_optimization(
                         if (idx >= off_size) break;
                         offspring[idx] = evaluate_individual(
                             base_cfg, per_symbol_candles, symbols_info, axes, limits,
-                            offspring[idx].genes, gen);
+                            offspring[idx].genes, gen, &mtf_candles);
                     }
                 });
             }

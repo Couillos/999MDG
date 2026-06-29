@@ -7,6 +7,8 @@
 #include "optimizer/types.h"
 #include "optimizer/nsga2.h"
 #include <functional>
+#include <map>
+#include <string>
 #include <vector>
 
 namespace powermdg {
@@ -44,6 +46,7 @@ void compute_objectives_for_population(
 /// @param cfg           Full config (mode, strategy defaults, optimize bounds, GA params)
 /// @param per_symbol_candles  Candle data per symbol
 /// @param symbols_info  Symbol metadata
+/// @param mtf_candles   Pre-loaded multi-timeframe candle data (load once, reuse across all evaluations)
 /// @param results_path  If non-empty, writes all results as zstd-compressed JSON
 /// @param callback      Optional progress callback invoked after each generation
 /// @param live_state_path  If non-empty, writes live state JSON here after each generation
@@ -51,6 +54,7 @@ OptimizerResult run_optimization(
     const Config& cfg,
     const std::vector<LoadedCandles>& per_symbol_candles,
     const std::vector<SymbolInfo>& symbols_info,
+    const std::map<std::string, std::vector<LoadedCandles>>& mtf_candles,
     const std::string& results_path = "",
     OptimizerCallback callback = nullptr,
     const std::string& live_state_path = ""

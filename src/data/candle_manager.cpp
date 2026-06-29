@@ -296,6 +296,9 @@ LoadedCandles load_candles(const Config& cfg) {
                 }
 
                 if (needs_download) {
+                    std::printf("  Downloading %s %s [%ld .. %ld)...\n",
+                                sym.c_str(), cfg.timeframe.c_str(),
+                                static_cast<long>(chunk_start), static_cast<long>(chunk_end));
                     auto candles = client.fetch_klines(sym, cfg.timeframe, chunk_start, chunk_end);
                     if (candles && !candles->empty()) {
                         // Split chunk into daily files
@@ -304,7 +307,10 @@ LoadedCandles load_candles(const Config& cfg) {
                             by_day[day_boundary(c.timestamp)].push_back(std::move(c));
                         }
                         for (auto& [day, day_candles] : by_day) {
-                            write_daily_file(daily_path(cfg.timeframe, sym, day), day_candles);
+                            auto const path = daily_path(cfg.timeframe, sym, day);
+                            write_daily_file(path, day_candles);
+                            std::printf("    -> %s (%zu candles)\n",
+                                        path.c_str(), day_candles.size());
                         }
                     } else if (!candles) {
                         std::fprintf(stderr, "Warning: failed to fetch %s %s %ld..%ld\n",
@@ -331,9 +337,14 @@ LoadedCandles load_candles(const Config& cfg) {
     }
 
     // 5. Load daily files (already at target timeframe)
+    std::printf("Preparing data: timeframe=%s, symbols=%zu, date_from=%s, date_to=%s, warmup=%d\n",
+                cfg.timeframe.c_str(), cfg.symbols.size(),
+                cfg.date_from.c_str(), cfg.date_to.c_str(),
+                cfg.warmup_candles);
     std::vector<Candle> all_candles;
 
     for (const auto& sym : cfg.symbols) {
+        std::printf("  Loading candles for %s %s...\n", sym.c_str(), cfg.timeframe.c_str());
         auto day_start = day_boundary(data_start_ms);
         auto const day_end = day_boundary(date_to_ms) + 86400000;
 

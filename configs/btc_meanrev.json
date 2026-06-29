@@ -1,8 +1,8 @@
 {
   "symbols": ["BTCUSDT"],
   "timeframe": "15m",
-  "date_from": "2024-01-01",
-  "date_to": "2025-06-26",
+  "date_from": "2021-07-01",
+  "date_to": "2025-01-31",
   "initial_balance_usd": 10000.0,
   "total_wallet_exposure": 1.0,
   "strategy": {
@@ -16,8 +16,8 @@
     },
     "entries_algo": {
       "martingale": {
-        "entry_grid_spacing_pct": 0.01,
-        "double_down_factor": 0.5
+        "entry_grid_spacing_pct": 0.03,
+        "double_down_factor": 0.2
       }
     },
     "closes_algo": {
@@ -35,7 +35,7 @@
       "time_stop": { "time_stop_hours": 4.0 }
     },
     "initial_qty_pct": 0.01,
-    "sl_upnl_pct": -0.05,
+    "sl_upnl_pct": 0,
     "n_positions": 1,
     "parkinson_volatility_span": 14,
     "maker_fee_pct": 0.001

@@ -145,10 +145,47 @@ std::map<std::string, TfCandles> build_tf_data(
     return tfd;
 }
 
+// ── Multi-timeframe helper ──────────────────────────────────────────────────
+
+std::map<std::string, std::vector<LoadedCandles>> load_all_mtf_candles(const Config& cfg) {
+    std::set<std::string> needed_tfs;
+    needed_tfs.insert(cfg.timeframe);
+    for (auto const& [param_name, tf] : cfg.strategy.indicator_timeframes) {
+        if (!tf.empty()) needed_tfs.insert(tf);
+    }
+
+    std::map<std::string, std::vector<LoadedCandles>> mtf_data;
+    if (needed_tfs.size() <= 1) return mtf_data;
+
+    std::printf("Multi-timeframe mode: timeframes = [");
+    bool first = true;
+    for (auto const& tf : needed_tfs) {
+        if (!first) std::printf(", ");
+        std::printf("%s", tf.c_str());
+        first = false;
+    }
+    std::printf("]\n");
+
+    for (auto const& tf : needed_tfs) {
+        if (tf == cfg.timeframe) continue;
+        Config mtf_cfg = cfg;
+        mtf_cfg.timeframe = tf;
+        mtf_data[tf] = {};
+        for (size_t s = 0; s < cfg.symbols.size(); ++s) {
+            LoadedCandles lc = load_candles(mtf_cfg);
+            mtf_data[tf].push_back(std::move(lc));
+        }
+    }
+    return mtf_data;
+}
+
+// ── Backtest entry point ────────────────────────────────────────────────────
+
 BacktestResult run_backtest(const Config& cfg,
                             const std::vector<LoadedCandles>& per_symbol_candles,
                             const std::vector<SymbolInfo>& symbols_info,
-                            const std::string& output_dir) {
+                            const std::string& output_dir,
+                            const std::map<std::string, std::vector<LoadedCandles>>* mtf_candles) {
     size_t const n = cfg.symbols.size();
     size_t const nc = per_symbol_candles[0].candles.size();
 
@@ -178,27 +215,16 @@ BacktestResult run_backtest(const Config& cfg,
     for (auto const& lm : loss_modules) needs = needs | lm->data_needs();
     bool const need_mtf = powermdg::needs(needs, DataNeed::MultiTimeframe);
 
-    // Collect all timeframes needed by the config
-    // Base timeframe is always loaded. Additional timeframes come from indicator_timeframes map.
-    std::set<std::string> needed_tfs;
-    needed_tfs.insert(cfg.timeframe);
-    if (need_mtf) {
-        for (auto const& [param_name, tf] : cfg.strategy.indicator_timeframes) {
-            if (!tf.empty()) needed_tfs.insert(tf);
-        }
+    // Multi-timeframe: use pre-loaded data when provided, else load now
+    std::map<std::string, std::vector<LoadedCandles>> local_mtf;
+    if (mtf_candles) {
+        // Pre-loaded — nothing to do here
+    } else if (need_mtf && !cfg.strategy.indicator_timeframes.empty()) {
+        local_mtf = load_all_mtf_candles(cfg);
+        mtf_candles = &local_mtf;
     }
-    // Load candle data for each needed timeframe (skip base — already loaded)
-    std::map<std::string, std::vector<LoadedCandles>> mtf_candles;
-    for (auto const& tf : needed_tfs) {
-        if (tf == cfg.timeframe) continue;
-        Config mtf_cfg = cfg;
-        mtf_cfg.timeframe = tf;
-        mtf_candles[tf] = {};
-        for (size_t s = 0; s < n; ++s) {
-            LoadedCandles lc = load_candles(mtf_cfg);
-            mtf_candles[tf].push_back(std::move(lc));
-        }
-    }
+    static const std::map<std::string, std::vector<LoadedCandles>> EMPTY_MTF;
+    const auto& mtf_ref = mtf_candles ? *mtf_candles : EMPTY_MTF;
     bool const need_ema = powermdg::needs(needs, DataNeed::Ema) || powermdg::needs(needs, DataNeed::RollingStdev);
     bool const need_stdev = powermdg::needs(needs, DataNeed::RollingStdev);
     bool const need_candles = powermdg::needs(needs, DataNeed::CandleSeries);
@@ -291,8 +317,8 @@ BacktestResult run_backtest(const Config& cfg,
         auto pv_tf_it = cfg.strategy.indicator_timeframes.find("parkinson_volatility_span");
         if (pv_tf_it != cfg.strategy.indicator_timeframes.end() && need_mtf) {
             auto const& tf_name = pv_tf_it->second;
-            auto mtf_it = mtf_candles.find(tf_name);
-            if (mtf_it != mtf_candles.end()) {
+            auto mtf_it = mtf_ref.find(tf_name);
+            if (mtf_it != mtf_ref.end()) {
                 for (size_t s = 0; s < n; ++s) {
                     auto const& mtf_arr = mtf_it->second[s].candles;
                     if (mtf_arr.empty()) {
@@ -347,7 +373,7 @@ BacktestResult run_backtest(const Config& cfg,
                                   need_ema ? ema_values[s] : 0.0, rstd,
                                   need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{},
                                   i,
-                                  build_tf_data(s, current_candles[s]->timestamp, mtf_candles, need_mtf)};
+                                  build_tf_data(s, current_candles[s]->timestamp, mtf_ref, need_mtf)};
                 auto close_orders = closes_algo->compute_closes(ctx);
                 bool any_tp_close = false;
                 for (auto const& co : close_orders) {
@@ -383,7 +409,7 @@ BacktestResult run_backtest(const Config& cfg,
                                   need_ema ? ema_values[s] : 0.0, rstd_l,
                                   need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{},
                                   i,
-                                  build_tf_data(s, current_candles[s]->timestamp, mtf_candles, need_mtf)};
+                                  build_tf_data(s, current_candles[s]->timestamp, mtf_ref, need_mtf)};
                 for (auto const& lm : loss_modules) {
                     // DEFECT 1 FIX: track qty before each loss module so we can
                     // detect a partial de-risk (unstuck tranche) vs a full close.
@@ -431,7 +457,7 @@ BacktestResult run_backtest(const Config& cfg,
                               need_ema ? ema_values[s] : 0.0, rstd2,
                               need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{},
                               i,
-                              build_tf_data(s, current_candles[s]->timestamp, mtf_candles, need_mtf)};
+                              build_tf_data(s, current_candles[s]->timestamp, mtf_ref, need_mtf)};
 
             if (positions[s].total_qty < 1e-12) {
                 // ── First entry ──
