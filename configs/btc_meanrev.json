@@ -49,8 +49,9 @@
       "peak_recovery_hours_equity_usd": {"max": 1250}
     },
     "scoring": [
-      {"metric": "sharpe_ratio_usd", "goal": "max", "weight": 1.0},
-      {"metric": "calmar_ratio_usd", "goal": "max", "weight": 1.0}
+	{"metric": "sharpe_ratio_usd", "goal": "max", "weight": 1.0},
+	{"metric": "calmar_ratio_usd", "goal": "max", "weight": 1.0},
+	{"metric": "mdg_usd", "goal": "max", "weight": 1.0}
     ],
     "ga": {
       "population_size": 100,
