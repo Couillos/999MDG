@@ -50,16 +50,40 @@ std::vector<CloseOrder> GraduatedTpClosesAlgo::compute_closes(const ModuleContex
         if (q > 1e-12) { orders.push_back({q}); remaining -= q; }
     }
     // TP3: trailing ATR stop on remaining
+    // Trigger: close is still sufficiently close to VWAP (|z| <= tp2_z_threshold),
+    // OR close has reverted so far that it's within trailing_atr_mult * ATR of VWAP.
+    // If ATR data is unavailable, fall back to closing at the TP2/trailing threshold
+    // (|z| <= tp2_z_threshold) rather than leaving the residual forever open.
     if (ctx.pos.tp1_fired && remaining > 1e-12) {
+        bool should_close_tp3 = false;
+
+        // Try to get ATR data for trailing stop
         auto it = ctx.cfg.strategy.indicator_timeframes.find("atr_period");
-        if (it == ctx.cfg.strategy.indicator_timeframes.end()) return orders;
-        auto tf_it = ctx.tf_data.find(it->second);
-        if (tf_it == ctx.tf_data.end()) return orders;
-        double const atr = compute_atr(tf_it->second.candles, tf_it->second.current_idx, ctx.cfg.strategy.atr_period);
-        if (atr > 0.0) {
-            // Simple trailing: if price drops by trailing_atr_mult * ATR from recent high, exit
-            // For simplicity, just exit all remaining if |Z| starts increasing again
-            // (real trailing would need to track highest price since entry)
+        if (it != ctx.cfg.strategy.indicator_timeframes.end()) {
+            auto tf_it = ctx.tf_data.find(it->second);
+            if (tf_it != ctx.tf_data.end()) {
+                double const atr = compute_atr(tf_it->second.candles, tf_it->second.current_idx, ctx.cfg.strategy.atr_period);
+                if (atr > 0.0) {
+                    // ATR-based trailing: close remaining if price is within
+                    // trailing_atr_mult * ATR of VWAP (mean-reversion confirmed)
+                    double const trail_dist = ctx.cfg.strategy.trailing_atr_mult * atr;
+                    should_close_tp3 = std::abs(ctx.candle.close - vwap) <= trail_dist;
+                } else {
+                    // ATR computed as 0 (insufficient data) → fall back to z-score threshold
+                    should_close_tp3 = (z <= ctx.cfg.strategy.tp2_z_threshold);
+                }
+            } else {
+                // Timeframe not in tf_data → fall back to z-score threshold
+                should_close_tp3 = (z <= ctx.cfg.strategy.tp2_z_threshold);
+            }
+        } else {
+            // No atr_period timeframe configured → fall back to z-score threshold
+            should_close_tp3 = (z <= ctx.cfg.strategy.tp2_z_threshold);
+        }
+
+        if (should_close_tp3 && remaining > 1e-12) {
+            orders.push_back({remaining});
+            remaining = 0.0;
         }
     }
     return orders;

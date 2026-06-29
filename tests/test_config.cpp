@@ -174,3 +174,47 @@ TEST(ConfigTest, ModeOptimize) {
     EXPECT_EQ(cfg.mode, Mode::OPTIMIZE);
     remove_temp(path);
 }
+
+// H4 regression: a martingale config with entry_grid_spacing_pct == 0 must
+// be rejected with a clear error, NOT silently accepted (zero causes
+// division-by-zero in martingale.cpp and dca_linear.cpp).
+TEST(ConfigTest, MartingaleZeroGridSpacingRejected) {
+    char const* json_zero_spacing = R"({
+        "symbols": ["BTCUSDT"],
+        "timeframe": "1h",
+        "date_from": "2024-01-01",
+        "date_to": "2024-12-31",
+        "initial_balance_usd": 10000.0,
+        "total_wallet_exposure": 1.0,
+        "strategy": {
+            "entry_condition": {
+                "ema_dist_pct": {
+                    "entry_ema_period": 24,
+                    "entry_ema_distance_pct": 0.01
+                }
+            },
+            "entries_algo": {
+                "martingale": {
+                    "entry_grid_spacing_pct": 0.0,
+                    "double_down_factor": 0.5
+                }
+            },
+            "closes_algo": {
+                "simple_grid": {
+                    "close_grid_spacing_pct": 0.01,
+                    "close_grid_count": 2
+                }
+            },
+            "initial_qty_pct": 0.05,
+            "sl_upnl_pct": -0.1,
+            "n_positions": 1,
+            "parkinson_volatility_span": 12,
+            "maker_fee_pct": 0.001
+        },
+        "output": { "dir": "results" }
+    })";
+    auto path = write_temp(json_zero_spacing);
+    // Must exit (die) with a clear error message about entry_grid_spacing_pct
+    EXPECT_DEATH(load_config(path, Mode::BACKTEST), "entry_grid_spacing_pct");
+    remove_temp(path);
+}

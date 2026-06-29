@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "PowerMDG Backtest Config",
+  "title": "PowerMDG Backtest/Optimize Config",
   "type": "object",
   "required": [
     "symbols", "timeframe", "date_from", "date_to",
@@ -35,10 +35,54 @@
           "properties": {
             "ema_dist_pct": {
               "type": "object",
+              "description": "Enter long when close < EMA * (1 - entry_ema_distance_pct). Dip-buy for grid/martingale strategies.",
               "required": ["entry_ema_period", "entry_ema_distance_pct"],
               "properties": {
-                "entry_ema_period": { "type": "integer", "minimum": 2 },
+                "entry_ema_period": {
+                  "description": "EMA period. May be a plain integer or [\"timeframe\", value] for a multi-timeframe indicator.",
+                  "oneOf": [
+                    { "type": "integer", "minimum": 2 },
+                    { "type": "array", "minItems": 2, "maxItems": 2, "items": [{"type": "string"}, {"type": "integer", "minimum": 2}] }
+                  ]
+                },
                 "entry_ema_distance_pct": { "type": "number", "minimum": 0 }
+              }
+            },
+            "bb_reversion": {
+              "type": "object",
+              "description": "Enter when price touches the lower Bollinger Band (mean-reversion). Requires entry_ema_period (band mid), bb_std_mult (band width in std-devs), bb_min_bandwidth_pct (minimum band width filter).",
+              "required": ["entry_ema_period", "bb_std_mult", "bb_min_bandwidth_pct"],
+              "properties": {
+                "entry_ema_period": {
+                  "oneOf": [
+                    { "type": "integer", "minimum": 2 },
+                    { "type": "array", "minItems": 2, "maxItems": 2, "items": [{"type": "string"}, {"type": "integer", "minimum": 2}] }
+                  ]
+                },
+                "bb_std_mult": { "type": "number", "minimum": 0.5 },
+                "bb_min_bandwidth_pct": { "type": "number", "minimum": 0 }
+              }
+            },
+            "zscore_ou": {
+              "type": "object",
+              "description": "Enter when the Z-score of price vs VWAP exceeds zscore_entry_threshold (mean-reversion via Ornstein-Uhlenbeck). Optionally filtered by ATR trend (atr_filter_mult).",
+              "required": ["zscore_entry_threshold", "zscore_vwap_lookback", "atr_period", "atr_filter_mult"],
+              "properties": {
+                "zscore_entry_threshold": { "type": "number", "minimum": 0 },
+                "zscore_vwap_lookback": {
+                  "description": "VWAP lookback in candles. May be [\"timeframe\", value].",
+                  "oneOf": [
+                    { "type": "integer", "minimum": 2 },
+                    { "type": "array", "minItems": 2, "maxItems": 2, "items": [{"type": "string"}, {"type": "integer", "minimum": 2}] }
+                  ]
+                },
+                "atr_period": {
+                  "oneOf": [
+                    { "type": "integer", "minimum": 1 },
+                    { "type": "array", "minItems": 2, "maxItems": 2, "items": [{"type": "string"}, {"type": "integer", "minimum": 1}] }
+                  ]
+                },
+                "atr_filter_mult": { "type": "number", "minimum": 0 }
               }
             }
           },
@@ -51,10 +95,20 @@
           "properties": {
             "martingale": {
               "type": "object",
+              "description": "Grid-martingale DCA: each double-down uses a geometric multiplier on quantity (double_down_factor^level).",
               "required": ["entry_grid_spacing_pct", "double_down_factor"],
               "properties": {
-                "entry_grid_spacing_pct": { "type": "number", "minimum": 0 },
+                "entry_grid_spacing_pct": { "type": "number", "exclusiveMinimum": 0, "description": "Must be > 0. Zero causes division-by-zero." },
                 "double_down_factor": { "type": "number", "minimum": 0 }
+              }
+            },
+            "dca_linear": {
+              "type": "object",
+              "description": "Linear DCA: evenly-spaced grid levels, each adding linear_step extra lots.",
+              "required": ["entry_grid_spacing_pct", "linear_step"],
+              "properties": {
+                "entry_grid_spacing_pct": { "type": "number", "exclusiveMinimum": 0, "description": "Must be > 0. Zero causes division-by-zero." },
+                "linear_step": { "type": "number", "minimum": 0 }
               }
             }
           },
@@ -67,20 +121,95 @@
           "properties": {
             "simple_grid": {
               "type": "object",
+              "description": "Place a uniform grid of take-profit limit orders above average entry.",
               "required": ["close_grid_spacing_pct", "close_grid_count"],
               "properties": {
                 "close_grid_spacing_pct": { "type": "number", "minimum": 0 },
                 "close_grid_count": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "mean_revert_tp": {
+              "type": "object",
+              "description": "Close a fraction of the position when unrealised PnL hits a mean-reversion target.",
+              "required": ["revert_close_frac", "overshoot_pct", "tp_min_upnl_pct"],
+              "properties": {
+                "revert_close_frac": { "type": "number", "minimum": 0, "maximum": 1 },
+                "overshoot_pct": { "type": "number", "minimum": 0 },
+                "tp_min_upnl_pct": { "type": "number" }
+              }
+            },
+            "graduated_tp": {
+              "type": "object",
+              "description": "Three-stage TP: TP1 closes tp1_frac at Z-score tp1_z_threshold, TP2 closes tp2_frac at tp2_z_threshold, TP3 trails the remainder with ATR trailing stop.",
+              "required": ["tp1_z_threshold", "tp1_frac", "tp2_z_threshold", "tp2_frac", "trailing_atr_mult"],
+              "properties": {
+                "tp1_z_threshold": { "type": "number" },
+                "tp1_frac": { "type": "number", "minimum": 0, "maximum": 1 },
+                "tp2_z_threshold": { "type": "number" },
+                "tp2_frac": { "type": "number", "minimum": 0, "maximum": 1 },
+                "trailing_atr_mult": { "type": "number", "minimum": 0 }
               }
             }
           },
           "minProperties": 1,
           "maxProperties": 1
         },
+        "loss_algo": {
+          "type": "object",
+          "description": "Optional loss / risk management modules (OR logic — any one can fire). Keys are method names; values are parameter objects. Multiple methods may be specified.",
+          "properties": {
+            "legacy_stop_loss": {
+              "type": "object",
+              "description": "Simple SL based on sl_upnl_pct (top-level param). No per-module params needed.",
+              "properties": {}
+            },
+            "legacy_unstuck": {
+              "type": "object",
+              "description": "Periodically reduce stuck positions proportional to time_based_unstuck_pct / time_based_unstuck_age (top-level params).",
+              "properties": {}
+            },
+            "z_stop": {
+              "type": "object",
+              "description": "Close position when Z-score exceeds z_stop_threshold (trend-continuation stop).",
+              "required": ["z_stop_threshold"],
+              "properties": {
+                "z_stop_threshold": { "type": "number", "minimum": 0 }
+              }
+            },
+            "atr_stop": {
+              "type": "object",
+              "description": "ATR-based stop loss: close when price moves atr_stop_mult ATRs against the position.",
+              "required": ["atr_period", "atr_stop_mult"],
+              "properties": {
+                "atr_period": {
+                  "oneOf": [
+                    { "type": "integer", "minimum": 1 },
+                    { "type": "array", "minItems": 2, "maxItems": 2, "items": [{"type": "string"}, {"type": "integer", "minimum": 1}] }
+                  ]
+                },
+                "atr_stop_mult": { "type": "number", "minimum": 0 }
+              }
+            },
+            "time_stop": {
+              "type": "object",
+              "description": "Close position after time_stop_hours hours regardless of PnL (prevents positions getting stuck).",
+              "required": ["time_stop_hours"],
+              "properties": {
+                "time_stop_hours": { "type": "number", "minimum": 0 }
+              }
+            }
+          }
+        },
         "initial_qty_pct": { "type": "number", "minimum": 0, "maximum": 1 },
         "sl_upnl_pct": { "type": "number", "maximum": 0 },
         "n_positions": { "type": "integer", "minimum": 1 },
-        "parkinson_volatility_span": { "type": "integer", "minimum": 2 },
+        "parkinson_volatility_span": {
+          "description": "Lookback for Parkinson volatility estimator. May be [\"timeframe\", value]. Minimum 2.",
+          "oneOf": [
+            { "type": "integer", "minimum": 2 },
+            { "type": "array", "minItems": 2, "maxItems": 2, "items": [{"type": "string"}, {"type": "integer", "minimum": 2}] }
+          ]
+        },
         "maker_fee_pct": { "type": "number", "minimum": 0, "maximum": 1 },
         "time_based_unstuck_pct": { "type": "number", "minimum": 0 },
         "time_based_unstuck_age": { "type": "integer", "minimum": 0 }
@@ -92,6 +221,7 @@
         "n_workers": { "type": "integer", "minimum": 0 },
         "limits": {
           "type": "object",
+          "description": "Hard constraints: any candidate violating a limit is rejected. gain: {min: 0.5} rejects ruinous configs (H6).",
           "additionalProperties": {
             "type": "object",
             "properties": {
@@ -127,12 +257,40 @@
         },
         "bounds": {
           "type": "object",
-          "description": "Bounds for optimization. Keys must match parameter names used by the selected modules. The optimizer validates that each bound key corresponds to a parameter of the selected module method.",
+          "description": "Optimization bounds. Keys are parameter names or module blocks (entry_condition, entries_algo, closes_algo). Bound array formats: [lo, hi, step] or [\"timeframe\", lo, hi, step] for multi-timeframe params.",
+          "properties": {
+            "entry_condition": {
+              "type": "object",
+              "description": "Entry condition bounds, keyed by method name (must match strategy.entry_condition).",
+              "properties": {
+                "ema_dist_pct": { "type": "object", "additionalProperties": { "type": "array" } },
+                "bb_reversion": { "type": "object", "additionalProperties": { "type": "array" } },
+                "zscore_ou": { "type": "object", "additionalProperties": { "type": "array" } }
+              }
+            },
+            "entries_algo": {
+              "type": "object",
+              "description": "Entries algorithm bounds, keyed by method name (must match strategy.entries_algo).",
+              "properties": {
+                "martingale": { "type": "object", "additionalProperties": { "type": "array" } },
+                "dca_linear": { "type": "object", "additionalProperties": { "type": "array" } }
+              }
+            },
+            "closes_algo": {
+              "type": "object",
+              "description": "Closes algorithm bounds, keyed by method name (must match strategy.closes_algo).",
+              "properties": {
+                "simple_grid": { "type": "object", "additionalProperties": { "type": "array" } },
+                "mean_revert_tp": { "type": "object", "additionalProperties": { "type": "array" } },
+                "graduated_tp": { "type": "object", "additionalProperties": { "type": "array" } }
+              }
+            }
+          },
           "additionalProperties": {
             "type": "array",
-            "items": { "type": "number" },
+            "description": "Common/top-level param bound: [lo, hi, step] or [\"tf\", lo, hi, step]",
             "minItems": 2,
-            "maxItems": 3
+            "maxItems": 4
           }
         }
       }

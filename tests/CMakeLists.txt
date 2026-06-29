@@ -78,3 +78,21 @@ target_link_libraries(test_constraint_sort PRIVATE
 target_include_directories(test_constraint_sort PRIVATE ../src)
 
 add_test(NAME test_constraint_sort COMMAND test_constraint_sort)
+
+add_executable(test_metrics_invariants
+    test_metrics_invariants.cpp
+)
+
+target_compile_options(test_metrics_invariants PRIVATE
+    ${POWERMDG_TEST_WARN_FLAGS}
+)
+
+target_link_libraries(test_metrics_invariants PRIVATE
+    GTest::gtest
+    GTest::gtest_main
+    powermdg_lib
+)
+
+target_include_directories(test_metrics_invariants PRIVATE ../src)
+
+add_test(NAME test_metrics_invariants COMMAND test_metrics_invariants)

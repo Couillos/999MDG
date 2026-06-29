@@ -96,8 +96,24 @@ std::vector<ParamAxis> build_axes(
     return axes;
 }
 
+} // close anonymous namespace — apply_param_to_cfg and compute_objectives_for_population
+  // are defined below in the named powermdg:: namespace so tests can link to them.
+
 // ---------------------------------------------------------------------------
 // apply_param_to_cfg — handles ALL strategy parameters including time_based_*
+//
+// Defined in the named powermdg:: namespace (not anonymous) so that unit
+// tests in other translation units can link to and call it directly.
+//
+// M4 note: loss-module-specific parameters (z_stop_threshold, atr_period,
+// atr_stop_mult, time_stop_hours, atr_filter_mult) are applied unconditionally
+// here even when the corresponding loss module is not active.  The guard
+// "only optimise a param when its module is selected" lives in
+// loader.cpp::is_valid_bound_param(), which currently accepts these params
+// regardless of loss_algo_types (see loader.cpp:258).  A future fix in
+// loader.cpp should reject bound axes whose module is absent so the GA does
+// not waste a genome dimension.  The optimizer itself cannot enforce this
+// without reading loader.cpp logic (out of scope for this agent).
 // ---------------------------------------------------------------------------
 
 void apply_param_to_cfg(Config& cfg, const std::string& name, double value) {
@@ -164,11 +180,14 @@ void apply_param_to_cfg(Config& cfg, const std::string& name, double value) {
     } else if (name == "time_stop_hours") {
         cfg.strategy.time_stop_hours = value;
     } else if (name == "atr_filter_mult") {
+        // C3 fix: only set atr_filter_mult. The two stray lines that also
+        // overwrote tp_min_upnl_pct and time_based_unstuck_age were a merge
+        // artifact and have been removed.
         cfg.strategy.atr_filter_mult = value;
-        cfg.strategy.tp_min_upnl_pct = value;
-        cfg.strategy.time_based_unstuck_age = static_cast<int>(value);
     }
 }
+
+namespace {  // reopen anonymous namespace for internal-only helpers
 
 // ---------------------------------------------------------------------------
 // get_metric_value — includes all Metrics fields
@@ -268,11 +287,25 @@ Config make_config_from_genes(const Config& base,
     for (size_t i = 0; i < genes.size(); ++i) {
         apply_param_to_cfg(cfg, axes[i].name, genes[i]);
     }
-    // IMPORTANT: use base.warmup_candles (= max_warmup from bounds) so that
-    // the backtest's trading start matches the data loading's warmup.
-    // If we used max(ema_period, parkinson_span) here, the trading start
-    // would differ from the data loading warmup, causing the equity curve
-    // to differ between optimizer and final backtest.
+
+    // M3: revalidate after gene application — clamp/guard degenerate values
+    // that the loader would normally reject, preventing div-by-zero / NaN in
+    // genomes where the GA chose boundary values the engine cannot handle.
+    if (cfg.strategy.parkinson_volatility_span < 2) {
+        cfg.strategy.parkinson_volatility_span = 2;
+    }
+    if (cfg.strategy.entry_grid_spacing_pct <= 0.0) {
+        // Use base value as fallback; if base is also 0, force a tiny positive
+        // step so martingale / dca_linear do not divide by zero.
+        cfg.strategy.entry_grid_spacing_pct =
+            (base.strategy.entry_grid_spacing_pct > 0.0)
+                ? base.strategy.entry_grid_spacing_pct
+                : 0.001;
+    }
+
+    // IMPORTANT: use base.warmup_candles (= max_warmup from bounds, computed
+    // once in run_optimization before any gene evaluation) so that the
+    // backtest's trading start matches the data loading's warmup.
     cfg.warmup_candles = base.warmup_candles;
     return cfg;
 }
@@ -300,8 +333,14 @@ Individual evaluate_individual(
     return ind;
 }
 
+} // close anonymous namespace — compute_objectives_for_population defined below
+  // in the named powermdg:: namespace so unit tests can link to it.
+
 // ---------------------------------------------------------------------------
 // compute_objectives_for_population — raw engine-space values (no z-score)
+//
+// Defined in the named powermdg:: namespace (not anonymous) so that unit
+// tests in other translation units can link to and call it directly.
 // ---------------------------------------------------------------------------
 
 void compute_objectives_for_population(
@@ -311,14 +350,36 @@ void compute_objectives_for_population(
     size_t const n_obj = scoring.size();
     if (n_obj == 0 || population.empty()) return;
 
+    // DEFECT B – NSGA-II per-axis scale invariance (honest comment):
+    // NSGA-II Pareto dominance is scale-invariant per axis: multiplying objective j
+    // by a constant weight does NOT change which individuals dominate which others,
+    // because dominance only compares the SAME objective across individuals.
+    // Crowding distance is re-normalised per axis by the sort, so weight also has
+    // negligible effect there.  Weights therefore have ~no real effect on the
+    // evolutionary selection process.
+    //
+    // Weights DO matter for the FINAL best-candidate selection (see the weighted-sum
+    // scorer at the bottom of run_optimization()).  There, per-objective values are
+    // normalised across the population and the weighted sum picks the single best
+    // candidate from the feasible Pareto front, so a higher weight genuinely pulls
+    // selection toward that metric.
+    //
+    // We keep the weight multiplication here only so that the stored objectives[]
+    // values reflect the configured sign (engine_sign).  A weight of 0 would collapse
+    // the axis — absent/zero weights default to 1.0 (guaranteed by the ScoringMetric
+    // struct default).  For the NSGA-II evolution itself, weights are cosmetic;
+    // for the final pick they are decisive.
     for (auto& ind : population) {
         ind.objectives.resize(n_obj);
         for (size_t j = 0; j < n_obj; ++j) {
             double const raw = get_metric_value(ind.metrics, scoring[j].metric);
+            // Store sign-flipped raw value; weight applied in final selection only.
             ind.objectives[j] = raw * scoring[j].engine_sign;
         }
     }
 }
+
+namespace {  // reopen anonymous namespace for write_result_json and remaining helpers
 
 // ---------------------------------------------------------------------------
 // write_result_json — one individual as JSON line
@@ -733,6 +794,41 @@ OptimizerResult run_optimization(
     int const pop_size = ga.population_size;
     int const n_gen = ga.n_generations;
 
+    // M1: compute warmup sized for the GENOME, not just the base config.
+    // The loader sets cfg.warmup_candles from the base config values; if the
+    // GA explores entry_ema_period / parkinson_volatility_span /
+    // zscore_vwap_lookback / atr_period near the top of their bounds, those
+    // bounds may exceed the base warmup and leave the indicator with too little
+    // history.  We scan every axis and take the maximum bound-hi for the
+    // relevant parameters, then store the result in base_cfg which is passed
+    // to all evaluation calls (make_config_from_genes copies
+    // base.warmup_candles verbatim so every genome gets the same warmup).
+    //
+    // This does NOT edit loader.cpp (out of scope).  The final --backtest-best
+    // run inherits the enlarged warmup because it reads the saved config from
+    // the optimizer run.
+    Config base_cfg = cfg;
+    {
+        static constexpr const char* WARMUP_PARAMS[] = {
+            "entry_ema_period",
+            "parkinson_volatility_span",
+            "zscore_vwap_lookback",
+            "atr_period",
+        };
+        int max_warmup = cfg.warmup_candles;
+        for (const auto& axis : axes) {
+            for (const char* p : WARMUP_PARAMS) {
+                if (axis.name == p) {
+                    int const bound_hi = static_cast<int>(axis.values.back());
+                    if (bound_hi > max_warmup) max_warmup = bound_hi;
+                }
+            }
+        }
+        base_cfg.warmup_candles = max_warmup;
+        std::printf("  warmup_candles: base=%d, bound-aware=%d\n",
+                    cfg.warmup_candles, max_warmup);
+    }
+
     std::printf("  NSGA-II: pop=%d, gen=%d, params=%zu, objectives=%zu\n",
                 pop_size, n_gen, n_params, scoring.size());
 
@@ -767,7 +863,7 @@ OptimizerResult run_optimization(
                     size_t const idx = eval_idx.fetch_add(1, std::memory_order_relaxed);
                     if (idx >= population.size()) break;
                     population[idx] = evaluate_individual(
-                        cfg, per_symbol_candles, symbols_info, axes, limits,
+                        base_cfg, per_symbol_candles, symbols_info, axes, limits,
                         gene_pop[idx], 0);
                 }
             });
@@ -822,7 +918,7 @@ OptimizerResult run_optimization(
                         size_t const idx = eval_idx.fetch_add(1, std::memory_order_relaxed);
                         if (idx >= off_size) break;
                         offspring[idx] = evaluate_individual(
-                            cfg, per_symbol_candles, symbols_info, axes, limits,
+                            base_cfg, per_symbol_candles, symbols_info, axes, limits,
                             offspring[idx].genes, gen);
                     }
                 });
@@ -909,18 +1005,82 @@ OptimizerResult run_optimization(
         }
     }
 
-    // Sort all_results by Pareto rank (ascending) then crowding distance (descending)
-    std::sort(result.all_results.begin(), result.all_results.end(),
-        [](const RunResult& a, const RunResult& b) {
-            if (a.rank != b.rank) return a.rank < b.rank;
-            return a.crowding_distance > b.crowding_distance;
-        });
+    // DEFECT B fix: weighted-sum best-candidate selection.
+    //
+    // NSGA-II Pareto dominance is scale-invariant per objective axis, so weight
+    // multiplied into objectives[] during evolution has ~no real effect on which
+    // individuals survive (see compute_objectives_for_population comment).
+    // To make weights GENUINELY influence which single candidate is declared
+    // "best" (#1 in all_results / used by --backtest-best), we compute a
+    // WEIGHTED-SUM SCALAR over the feasible Pareto-optimal set:
+    //
+    //   weighted_score(ind) = sum_j [ weight_j * norm_j(ind) ]
+    //
+    // where norm_j(ind) = (obj_j(ind) - min_j) / (max_j - min_j + eps) and
+    // obj_j = raw_metric * engine_sign  (engine-space: lower is worse).
+    //
+    // Because engine_sign = -1 for "max" goals, a HIGHER obj_j means a WORSE
+    // outcome.  We want the BEST candidate to have the LOWEST weighted-sum, so
+    // we normalise as "closeness to min" (lower obj = better = higher normalised
+    // score):   norm_j = (max_j - obj_j) / (max_j - min_j + eps)
+    //
+    // A feasible rank-1 candidate with the highest weighted_score is the one that
+    // best satisfies the user's weighting across metrics.  This is computed once
+    // here on the final population; the evolutionary loop is NOT touched.
+    {
+        size_t const n_obj = scoring.size();
+        // Compute per-axis min/max across ALL feasible population members.
+        // Using the full population (not just rank-1) gives a stable normalisation
+        // range even when the Pareto front is small.
+        std::vector<double> obj_min(n_obj,  1e300);
+        std::vector<double> obj_max(n_obj, -1e300);
+        for (const auto& ind : population) {
+            if (ind.constraint_violation > CV_EPS) continue;
+            if (ind.objectives.size() < n_obj) continue;
+            for (size_t j = 0; j < n_obj; ++j) {
+                if (ind.objectives[j] < obj_min[j]) obj_min[j] = ind.objectives[j];
+                if (ind.objectives[j] > obj_max[j]) obj_max[j] = ind.objectives[j];
+            }
+        }
 
-    // Sort pareto front by crowding distance (descending)
-    std::sort(result.pareto_front.begin(), result.pareto_front.end(),
-        [](const RunResult& a, const RunResult& b) {
-            return a.crowding_distance > b.crowding_distance;
-        });
+        // Lambda: compute weighted score for a RunResult.
+        // Higher weighted_score = better candidate.
+        auto weighted_score = [&](const RunResult& rr) -> double {
+            if (rr.objectives.size() < n_obj) return -1e300;
+            double score = 0.0;
+            for (size_t j = 0; j < n_obj; ++j) {
+                double const range = obj_max[j] - obj_min[j];
+                double const eps   = 1e-12;
+                // norm ∈ [0,1]; 1 = best (closest to min), 0 = worst (= max)
+                double const norm  = (range > eps) ? (obj_max[j] - rr.objectives[j]) / (range + eps) : 1.0;
+                double const w     = (scoring[j].weight > 0.0) ? scoring[j].weight : 1.0;
+                score += w * norm;
+            }
+            return score;
+        };
+
+        // Sort all_results: feasible rank-1 by weighted_score DESC first,
+        // then remainder by rank ASC / crowding DESC.
+        std::stable_sort(result.all_results.begin(), result.all_results.end(),
+            [&](const RunResult& a, const RunResult& b) {
+                bool const a_best = (a.rank == 1 && a.constraint_violation <= CV_EPS);
+                bool const b_best = (b.rank == 1 && b.constraint_violation <= CV_EPS);
+                if (a_best != b_best) return a_best > b_best; // feasible rank-1 first
+                if (a_best && b_best) {
+                    // Both on feasible Pareto front: rank by weighted sum
+                    return weighted_score(a) > weighted_score(b);
+                }
+                // Outside Pareto front: rank by Pareto rank then crowding distance
+                if (a.rank != b.rank) return a.rank < b.rank;
+                return a.crowding_distance > b.crowding_distance;
+            });
+
+        // Sort pareto_front by weighted_score DESC so results[0] == pareto_front[0].
+        std::stable_sort(result.pareto_front.begin(), result.pareto_front.end(),
+            [&](const RunResult& a, const RunResult& b) {
+                return weighted_score(a) > weighted_score(b);
+            });
+    }
 
     // 11. Write Pareto JSON
     if (!results_path.empty()) {

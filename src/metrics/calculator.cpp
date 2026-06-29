@@ -9,9 +9,18 @@ namespace powermdg {
 namespace {
 
 /// Extracts one equity value per day (last snapshot of each UTC day).
+///
+/// C4 fix: we always prepend curve[0].equity as the opening anchor BEFORE the
+/// per-day bucketing loop.  Without this, a crash that happens entirely within
+/// day 0 causes daily[0] to be the post-crash trough (the day's last value),
+/// so gain = trough/trough ≈ 1.0 instead of trough/initial.  The anchor makes
+/// the very first daily sample the true opening balance, guaranteeing:
+///   gain = smoothed_end / smoothed_start ≈ final / initial.
 std::vector<double> daily_equity(const std::vector<EquityPoint>& curve) {
     if (curve.empty()) return {};
     std::vector<double> daily;
+    // Always start with the opening equity — this is the "day -1 close" / t=0 anchor.
+    daily.push_back(curve[0].equity);
     int64_t prev_day = curve[0].timestamp - (curve[0].timestamp % 86400000);
     double last_eq = curve[0].equity;
     for (size_t i = 1; i < curve.size(); ++i) {
@@ -101,13 +110,20 @@ double downside_dev(const std::vector<double>& v) {
     return cnt > 0 ? std::sqrt(sq / static_cast<double>(v.size())) : 0.0;
 }
 
-/// Computes maximum drawdown from peak as a fraction.
+/// Computes maximum drawdown from peak as a fraction, clamped to [0, 1].
+///
+/// C4 fix: negative-equity edge cases (e.g. a curve that temporarily dips
+/// below zero due to unrealised P&L) could otherwise produce dd > 1.  We
+/// clamp each per-step dd to [0, 1] so the aggregate mdd is always in [0, 1].
 double max_drawdown(const std::vector<double>& eq) {
     if (eq.size() < 2) return 0.0;
     double peak = eq[0], mdd = 0.0;
     for (size_t i = 1; i < eq.size(); ++i) {
         if (eq[i] > peak) peak = eq[i];
-        double const dd = (peak - eq[i]) / peak;
+        if (peak <= 0.0) continue; // guard against zero/negative peak
+        double dd = (peak - eq[i]) / peak;
+        if (dd < 0.0) dd = 0.0;
+        if (dd > 1.0) dd = 1.0;
         if (dd > mdd) mdd = dd;
     }
     return mdd;
@@ -166,11 +182,15 @@ std::pair<double, double> smoothed_terminal_gain_and_adg(const std::vector<doubl
     }
     double const start = smoothed[0];
     double const end = smoothed.back();
-    if (end <= 0.0) return {0.0, 0.0};
     // Number of intervals = number of points - 1
     double const n_intervals = static_cast<double>(daily_eqs.size() - 1);
-    double const gain = end / start;
-    double const adg = std::pow(gain, 1.0 / n_intervals) - 1.0;
+    // If the smoothed end is zero or negative (total loss), gain = 0 and adg is very negative.
+    // We clamp end to a tiny positive value so division is safe; gain will be near 0.
+    double const end_safe = (end > 0.0) ? end : 1e-15;
+    double const gain = end_safe / start;
+    double const adg = (gain > 0.0 && n_intervals > 0.0)
+                           ? std::pow(gain, 1.0 / n_intervals) - 1.0
+                           : -1.0;
     return {gain, adg};
 }
 

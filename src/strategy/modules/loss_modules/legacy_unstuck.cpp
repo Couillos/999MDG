@@ -13,7 +13,16 @@ std::vector<CloseOrder> LegacyUnstuck::compute_loss_exits(const ModuleContext& c
     if (held_ms < age_ms) return orders;
     int64_t const expected = held_ms / age_ms;
     if (expected <= static_cast<int64_t>(ctx.pos.unstuck_levels)) return orders;
-    double const tranche = pct * ctx.cfg.initial_balance_usd;
+    // Tranche proportional to current position notional relative to current balance.
+    // Using initial_balance_usd (a fixed constant) means the tranche never shrinks
+    // as the account decays — causing the module to dump the entire position at once
+    // instead of de-risking progressively. Scaling by total_balance (current equity)
+    // makes the tranche proportional to account size: as balance shrinks, so does
+    // the tranche, preventing a catastrophic single-candle full dump.
+    double const ref_notional = (ctx.total_balance > 1e-12)
+        ? ctx.total_balance
+        : ctx.pos.total_qty * ctx.candle.close;
+    double const tranche = pct * ref_notional;
     double const close_qty = std::min(tranche / ctx.candle.close, ctx.pos.total_qty);
     if (close_qty > 1e-12) {
         orders.push_back({close_qty});

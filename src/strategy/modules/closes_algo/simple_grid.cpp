@@ -42,9 +42,17 @@ std::vector<CloseOrder> SimpleGridClosesAlgo::compute_closes(const ModuleContext
             continue;
         }
 
-        double close_qty = round_step(remaining_qty
-            / static_cast<double>(ctx.cfg.strategy.close_grid_count), ctx.info.step_size);
-        close_qty = std::min(close_qty, remaining_qty);
+        double close_qty;
+        if (k == ctx.cfg.strategy.close_grid_count) {
+            // Last grid level: sweep the entire remaining qty so no dust is left.
+            // round_step can under-close due to rounding, leaving a permanent residual
+            // that the engine's 1e-12 guard will never flush.
+            close_qty = remaining_qty;
+        } else {
+            close_qty = round_step(remaining_qty
+                / static_cast<double>(ctx.cfg.strategy.close_grid_count), ctx.info.step_size);
+            close_qty = std::min(close_qty, remaining_qty);
+        }
 
         if (close_qty > 1e-12) {
             orders.push_back({close_qty});

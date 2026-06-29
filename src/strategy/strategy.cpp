@@ -57,6 +57,9 @@ void reset_position_state(Position& pos) {
     pos.entry_levels = 0;
     pos.unstuck_levels = 0;
     pos.entry_tick = 0;
+    pos.entry_side = 0;
+    pos.original_qty = 0.0;
+    pos.tp1_fired = false;
 }
 
 /// Execute a close order: update pos (realized PnL, fees, qty, traded_qty).
@@ -80,6 +83,9 @@ void execute_first_entry(Position& pos, const EntryOrder& eo, const Candle& cand
     pos.entry_timestamp_ms = candle.timestamp;
     pos.unstuck_levels = 0;
     pos.realized_pnl -= fee;
+    // H3: record the side and initial qty for modules that need them
+    pos.entry_side = 1;          // long position
+    pos.original_qty = eo.qty;
 }
 
 /// Execute a double-down entry: add to an existing position.
@@ -245,6 +251,7 @@ BacktestResult run_backtest(const Config& cfg,
     result.equity_curve.reserve(reserve_count);
     int total_positions = 0;
     double balance = cfg.initial_balance_usd;
+    bool bankrupt = false;  // liquidation floor flag
 
     // Volatility ranking helpers
     std::vector<size_t> sym_order(n);
@@ -327,6 +334,11 @@ BacktestResult run_backtest(const Config& cfg,
 
         // ── Step a: CLOSES ─────────────────────────────────────────────────
         // Ask closes_algo for close orders, then execute them.
+        // Step a contains ONLY take-profit closes (stop-loss/unstuck are in Step b),
+        // so "closes_algo scaled out this tick" == "a TP fired". We set tp1_fired
+        // whenever any close order executed (qty > 0), regardless of price vs
+        // avg_entry. This unblocks graduated_tp TP2/TP3 (which can fire while
+        // close < avg_entry on a z-score revert) and lets time_stop disengage.
         for (size_t s = 0; s < n; ++s) {
             if (positions[s].total_qty > 1e-12) {
                 double const rstd = need_stdev ? stdev_values[s] : 0.0;
@@ -337,8 +349,19 @@ BacktestResult run_backtest(const Config& cfg,
                                   i,
                                   build_tf_data(s, current_candles[s]->timestamp, mtf_candles, need_mtf)};
                 auto close_orders = closes_algo->compute_closes(ctx);
+                bool any_tp_close = false;
                 for (auto const& co : close_orders) {
+                    if (co.qty > 1e-12) {
+                        any_tp_close = true;
+                    }
                     execute_close(positions[s], co, *current_candles[s], cfg);
+                }
+                // DEFECT 3 FIX: set tp1_fired whenever closes_algo executed any close
+                // this tick — regardless of price vs avg_entry. Step a is TP-only, so
+                // "executed a close" means "TP fired". This enables graduated_tp TP2/TP3
+                // even when TP1 fired while close < avg_entry (z-score revert in-loss).
+                if (any_tp_close) {
+                    positions[s].tp1_fired = true;
                 }
                 // Guard against floating-point residuals
                 if (std::abs(positions[s].total_qty) < 1e-12) {
@@ -362,9 +385,20 @@ BacktestResult run_backtest(const Config& cfg,
                                   i,
                                   build_tf_data(s, current_candles[s]->timestamp, mtf_candles, need_mtf)};
                 for (auto const& lm : loss_modules) {
+                    // DEFECT 1 FIX: track qty before each loss module so we can
+                    // detect a partial de-risk (unstuck tranche) vs a full close.
+                    double const qty_before_lm = positions[s].total_qty;
                     auto loss_orders = lm->compute_loss_exits(lctx);
                     for (auto const& co : loss_orders) {
                         execute_close(positions[s], co, *current_candles[s], cfg);
+                    }
+                    // If the position is still open (partial close, not a full stop),
+                    // and qty strictly decreased, this was an unstuck tranche.
+                    // Increment unstuck_levels so legacy_unstuck's gate
+                    // (expected <= unstuck_levels) prevents it re-firing every candle.
+                    double const qty_after_lm = positions[s].total_qty;
+                    if (qty_after_lm > 1e-12 && qty_after_lm < qty_before_lm - 1e-12) {
+                        positions[s].unstuck_levels += 1;
                     }
                     if (std::abs(positions[s].total_qty) < 1e-12) break;
                 }
@@ -377,9 +411,13 @@ BacktestResult run_backtest(const Config& cfg,
         }
 
         // ── Step c: ENTRIES ────────────────────────────────────────────────
-        // In the original code, process_entries checked the EMA threshold for
-        // BOTH first entry AND double-down (the check was before the branch).
-        // We preserve this: entry_condition is checked for both.
+        // C2: entry_condition->should_enter() is ONLY checked for the first
+        // entry (no open position).  Double-downs are governed entirely by the
+        // entries_algo grid spacing — blocking them with an EMA condition would
+        // prevent the martingale from averaging down on the very dip it was
+        // designed to capture.
+        // Liquidation floor: skip all new entries if we are bankrupt.
+        if (!bankrupt) {
         for (size_t s = 0; s < n; ++s) {
             if (!is_active[s]) continue;
 
@@ -395,12 +433,10 @@ BacktestResult run_backtest(const Config& cfg,
                               i,
                               build_tf_data(s, current_candles[s]->timestamp, mtf_candles, need_mtf)};
 
-            // Check entry condition for BOTH first entry and double-down
-            // (matches original behavior: EMA check was before the branch)
-            if (!entry_condition->should_enter(ctx)) continue;
-
             if (positions[s].total_qty < 1e-12) {
                 // ── First entry ──
+                // Gate on entry_condition only here (C2 fix)
+                if (!entry_condition->should_enter(ctx)) continue;
                 if (total_positions >= cfg.strategy.n_positions) continue;
 
                 auto entry_orders = entries_algo->compute_entries(ctx);
@@ -412,6 +448,7 @@ BacktestResult run_backtest(const Config& cfg,
                 }
             } else {
                 // ── Double-down ──
+                // No entry_condition check: governed solely by grid spacing (C2 fix)
                 double const current_we = balance > 0.0
                     ? std::abs(positions[s].total_qty * current_candles[s]->close) / balance
                     : 0.0;
@@ -423,6 +460,7 @@ BacktestResult run_backtest(const Config& cfg,
                 }
             }
         }
+        } // end if (!bankrupt)
 
         // (Step d: TIME-BASED UNSTUCK removed — now handled by loss modules in Step b)
 
@@ -457,6 +495,36 @@ BacktestResult run_backtest(const Config& cfg,
             balance += positions[s].realized_pnl;
         }
 
+        // ── Liquidation floor: equity must never go negative ──────────────
+        // Compute tentative equity to check for blow-up.
+        {
+            double const tentative_equity = total_equity(balance, positions, current_candles);
+            if (!bankrupt && tentative_equity <= 0.0) {
+                // Force-liquidate all open positions at current close price.
+                for (size_t s = 0; s < n; ++s) {
+                    if (positions[s].total_qty > 1e-12) {
+                        double const fee = std::abs(positions[s].total_qty
+                                                  * current_candles[s]->close)
+                                         * cfg.strategy.maker_fee_pct;
+                        positions[s].realized_pnl +=
+                            positions[s].total_qty
+                            * (current_candles[s]->close - positions[s].avg_entry_price)
+                            - fee;
+                        positions[s].traded_qty += positions[s].total_qty;
+                        positions[s].total_qty = 0.0;
+                        reset_position_state(positions[s]);
+                        if (total_positions > 0) total_positions -= 1;
+                    }
+                }
+                // Clamp balance/realized_pnl so equity records as 0
+                balance = 0.0;
+                for (size_t s = 0; s < n; ++s) {
+                    positions[s].realized_pnl = 0.0;
+                }
+                bankrupt = true;
+            }
+        }
+
         // ── Track position entry/exit for position_held_hours ──────────────
         for (size_t s = 0; s < n; ++s) {
             bool const now_open = positions[s].total_qty > 1e-12;
@@ -477,14 +545,14 @@ BacktestResult run_backtest(const Config& cfg,
             }
         }
 
-        // Record equity point
-        double const exposure = total_exposure(positions, current_candles);
-        double const equity = total_equity(balance, positions, current_candles);
+        // Record equity point (floored at 0 when bankrupt)
+        double const exposure = bankrupt ? 0.0 : total_exposure(positions, current_candles);
+        double const equity = bankrupt ? 0.0 : total_equity(balance, positions, current_candles);
 
         EquityPoint ep{};
         ep.timestamp = current_candles[0]->timestamp;
         ep.equity = equity;
-        ep.balance = balance;
+        ep.balance = bankrupt ? 0.0 : balance;
         ep.exposure_usd = exposure;
 
         for (size_t s = 0; s < n; ++s) {

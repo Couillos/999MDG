@@ -271,9 +271,10 @@ static void apply_params_to_cfg(Config& cfg, const std::map<std::string, double>
         else if (k == "time_stop_hours")
             cfg.strategy.time_stop_hours = v;
         else if (k == "atr_filter_mult") {
+            // C3 fix: only set atr_filter_mult; the two stray lines that also
+            // overwrote tp_min_upnl_pct and total_wallet_exposure were a merge
+            // artifact and have been removed.
             cfg.strategy.atr_filter_mult = v;
-            cfg.strategy.tp_min_upnl_pct = v;
-            cfg.total_wallet_exposure = v;
         }
     }
     // Don't recompute warmup_candles here — keep whatever was set by the caller.
@@ -476,14 +477,29 @@ static void run_optimize(Config const& cfg_in, bool backtest_best) {
     std::printf("  Loaded %zu symbols\n", symbols_info.size());
 
     int max_warmup = cfg.warmup_candles;
+    // DEFECT A fix: scan all four warmup-relevant params (not just the two that
+    // were listed before).  The optimizer's run_optimization() uses the same set
+    // (entry_ema_period, parkinson_volatility_span, zscore_vwap_lookback,
+    // atr_period) at ~line 800.  Missing zscore_vwap_lookback / atr_period here
+    // caused load_candles() to load candles with an undersized warmup whenever
+    // those params were present in the bounds, yielding a wrong trading_start_idx
+    // and too-little indicator history for the first evaluated individuals.
+    static constexpr const char* WARMUP_BOUND_PARAMS[] = {
+        "entry_ema_period",
+        "parkinson_volatility_span",
+        "zscore_vwap_lookback",
+        "atr_period",
+    };
     for (const auto& [name, bound] : cfg.optimize.bounds) {
-        if (name == "entry_ema_period" || name == "parkinson_volatility_span") {
-            int bval = static_cast<int>(bound.hi);
-            if (!bound.timeframe.empty()) {
-                double ratio = candle_ratio(bound.timeframe, cfg.timeframe);
-                bval = static_cast<int>(std::ceil(static_cast<double>(bval) * ratio));
+        for (const char* p : WARMUP_BOUND_PARAMS) {
+            if (name == p) {
+                int bval = static_cast<int>(bound.hi);
+                if (!bound.timeframe.empty()) {
+                    double ratio = candle_ratio(bound.timeframe, cfg.timeframe);
+                    bval = static_cast<int>(std::ceil(static_cast<double>(bval) * ratio));
+                }
+                if (bval > max_warmup) max_warmup = bval;
             }
-            if (bval > max_warmup) max_warmup = bval;
         }
     }
     // Set cfg.warmup_candles to max_warmup so that make_config_from_genes

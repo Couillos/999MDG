@@ -5,14 +5,17 @@
 
 namespace powermdg {
 
-/// Entry condition: enter when close > EMA * (1 + entry_ema_distance_pct).
+/// Entry condition: enter when close < EMA * (1 - entry_ema_distance_pct).
 ///
-/// This is the classic EMA-distance entry used by PassivBot-style grid bots.
-/// The position is only opened when the price is above the EMA by a configurable
-/// percentage, which acts as a trend filter.
+/// This is the dip-buy entry used by PassivBot-style long grid/martingale bots.
+/// The position is only opened when the price has dipped below the EMA by a
+/// configurable percentage, acting as a mean-reversion filter.
+/// Entering on dips (not tops) is essential: a long grid that averages down
+/// must start from a low point, otherwise grid levels are filled as the price
+/// falls from an already-elevated entry — a classic path to ruin.
 ///
 /// Parameters (read from cfg.strategy):
-///   - entry_ema_distance_pct: minimum distance above EMA (e.g. 0.01 = 1%)
+///   - entry_ema_distance_pct: minimum distance below EMA (e.g. 0.01 = 1% dip)
 ///
 /// Context fields used:
 ///   - candle.close: current close price

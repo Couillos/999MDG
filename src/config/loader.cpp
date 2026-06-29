@@ -250,12 +250,14 @@ bool is_valid_bound_param(const std::string& param_name, const StrategyParams& s
     for (auto const& p : params_for_closes_algo(sp.closes_algo_type)) {
         if (p == param_name) return true;
     }
-    // Check loss module params
-    for (auto const& p : params_for_loss_module("")) {
-        (void)p;
+    // M4: Check loss module params ONLY if the corresponding module is active.
+    // A bound on e.g. atr_stop_mult without atr_stop in loss_algo_types would waste
+    // a genome dimension on a parameter that has no effect.
+    for (auto const& method : sp.loss_algo_types) {
+        for (auto const& p : params_for_loss_module(method)) {
+            if (p == param_name) return true;
+        }
     }
-    // Also check individual loss params
-    if (param_name == "z_stop_threshold" || param_name == "atr_period" || param_name == "atr_stop_mult" || param_name == "time_stop_hours") return true;
     // Check common params
     for (auto const& p : common_optimizable_params()) {
         if (p == param_name) return true;
@@ -787,7 +789,20 @@ Config load_config(const std::string& path, Mode mode) {
         bool needs_ema_period = (cfg.strategy.entry_condition_type == "ema_dist_pct"
                               || cfg.strategy.entry_condition_type == "bb_reversion");
         if (needs_ema_period && cfg.strategy.entry_ema_period < 2) fatal("entry_ema_period must be >= 2");
-        if (cfg.strategy.entry_grid_spacing_pct < 0.0) fatal("entry_grid_spacing_pct must be >= 0");
+        // H4: strict validation — zero entry_grid_spacing_pct causes div-by-zero
+        // in martingale.cpp and dca_linear.cpp
+        if (cfg.strategy.entries_algo_type == "martingale" || cfg.strategy.entries_algo_type == "dca_linear") {
+            if (cfg.strategy.entry_grid_spacing_pct <= 0.0) {
+                std::fprintf(stderr,
+                    "Config error: entry_grid_spacing_pct must be > 0 for entries_algo '%s' "
+                    "(got %g — zero causes division-by-zero)\n",
+                    cfg.strategy.entries_algo_type.c_str(),
+                    cfg.strategy.entry_grid_spacing_pct);
+                std::exit(1);
+            }
+        } else {
+            if (cfg.strategy.entry_grid_spacing_pct < 0.0) fatal("entry_grid_spacing_pct must be >= 0");
+        }
         if (cfg.strategy.initial_qty_pct < 0.0 || cfg.strategy.initial_qty_pct > 1.0) fatal("initial_qty_pct must be in [0, 1]");
         if (cfg.strategy.sl_upnl_pct > 0.0) fatal("sl_upnl_pct must be <= 0");
         if (cfg.strategy.n_positions < 1) fatal("n_positions must be >= 1");

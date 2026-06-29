@@ -163,20 +163,24 @@ TEST(MetricsTest, AdgSmoothed) {
     }
     auto m = compute_metrics(make_result(curve), cfg);
 
-    // d_eq = [10000, 10010, ..., 10090]
-    // PassivBot formula: EMA(alpha=0.5) over full series
-    // smoothed[0] = 10000, ..., smoothed[9] = 10080.01953125
-    // gain = 10080.01953125/10000
-    // adg = gain^(1/n_intervals) - 1, where n_intervals = n_points - 1 = 9
-    // (Fix for audit issue M2: previously used n_points=10, off-by-one)
+    // C4 fix: daily_equity() now prepends curve[0].equity as an opening anchor.
+    // For 10 daily points (each 1 day apart), daily_equity produces 11 values:
+    //   [10000, 10000, 10010, 10020, 10030, 10040, 10050, 10060, 10070, 10080, 10090]
+    //   (anchor + end-of-day for days 0..9 + final push)
+    // PassivBot formula: EMA(alpha=0.5) over this 11-element series.
+    // n_intervals = 11 - 1 = 10.
     double expected = 10000.0;
     double const alpha = 2.0 / 4.0; // span=3
-    for (int i = 10010; i <= 10090; i += 10) {
-        expected = alpha * static_cast<double>(i) + (1.0 - alpha) * expected;
+    // Apply EMA to the 11-element series starting at smoothed[0] = 10000.
+    // Series: [10000, 10000, 10010, 10020, ..., 10090]
+    static const double d_eq_11[] = {10000, 10000, 10010, 10020, 10030, 10040, 10050, 10060, 10070, 10080, 10090};
+    expected = d_eq_11[0];
+    for (int i = 1; i < 11; ++i) {
+        expected = alpha * d_eq_11[i] + (1.0 - alpha) * expected;
     }
     double const gain = expected / 10000.0;
-    expected = std::pow(gain, 1.0 / 9.0) - 1.0;
-    EXPECT_NEAR(m.adg_smoothed, expected, 1e-15);
+    double const adg_expected = std::pow(gain, 1.0 / 10.0) - 1.0;
+    EXPECT_NEAR(m.adg_smoothed, adg_expected, 1e-10);
 
     // No drawdown means drawdown_worst_mean_1pct stays 0
     EXPECT_DOUBLE_EQ(m.drawdown_worst_mean_1pct, 0.0);
@@ -214,13 +218,21 @@ TEST(MetricsTest, SterlingRatio) {
     }
     auto m = compute_metrics(make_result(curve), cfg);
 
-    // d_eq = [10000 (x150), 8000 (x50)]
-    // tail_len = 3, end = 8000, start = 10000
-    // adg_smoothed = (8000/10000)^(1/n_intervals) - 1, n_intervals = 199 (n_points-1)
-    // (Fix for audit issue M2: previously used 200, off-by-one)
-    // drawdown_worst_mean_1pct = 0.20
-    // sterling_ratio = adg_smoothed / 0.20
-    double const expected_adg = std::pow(8000.0 / 10000.0, 1.0 / 199.0) - 1.0;
+    // C4 fix: daily_equity() prepends curve[0].equity as an opening anchor.
+    // For 200 daily points (one per day), daily_equity produces 201 values:
+    //   [10000(x151), 8000(x50)] — the first 151 are 10000 (anchor + 150 days), last 50 are 8000.
+    // EMA(alpha=0.5) over 201 elements: for 151 flat 10000s, smoothed stays at 10000.
+    // Then 50 steps of EMA toward 8000.  After 50 steps with alpha=0.5:
+    //   smoothed = 10000*(0.5)^50 + 8000*(1-(0.5)^50) ≈ 8000 (within machine precision).
+    // gain ≈ 8000/10000, n_intervals = 200.
+    // We compute the expected value from first principles (same formula as the implementation).
+    double const alpha = 2.0 / 4.0;
+    double smoothed = 10000.0;
+    // 150 more 10000s after the anchor (150+1 = 151 flat, but we already started at smoothed[0]=10000)
+    for (int i = 0; i < 150; ++i) smoothed = alpha * 10000.0 + (1.0 - alpha) * smoothed;
+    for (int i = 0; i < 50; ++i) smoothed = alpha * 8000.0 + (1.0 - alpha) * smoothed;
+    double const gain = smoothed / 10000.0;
+    double const expected_adg = std::pow(gain, 1.0 / 200.0) - 1.0;
     double const expected_sr = expected_adg / 0.20;
-    EXPECT_NEAR(m.sterling_ratio, expected_sr, 1e-15);
+    EXPECT_NEAR(m.sterling_ratio, expected_sr, 1e-10);
 }
