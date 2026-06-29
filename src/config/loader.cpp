@@ -217,9 +217,8 @@ std::vector<std::string> params_for_closes_algo(const std::string& method) {
 /// Common strategy params (not tied to a specific module) that can be optimized.
 std::vector<std::string> common_optimizable_params() {
     return {
-        "initial_qty_pct", "sl_upnl_pct", "n_positions",
+        "initial_qty_pct", "n_positions",
         "parkinson_volatility_span", "maker_fee_pct",
-        "time_based_unstuck_pct", "time_based_unstuck_age",
         "total_wallet_exposure"
     };
 }
@@ -234,6 +233,8 @@ std::vector<std::string> params_for_loss_module(const std::string& method) {
     if (method == "z_stop") return {"z_stop_threshold", "zscore_vwap_lookback"};
     if (method == "atr_stop") return {"atr_period", "atr_stop_mult"};
     if (method == "time_stop") return {"time_stop_hours"};
+    if (method == "legacy_stop_loss") return {"sl_upnl_pct"};
+    if (method == "legacy_unstuck") return {"time_based_unstuck_pct", "time_based_unstuck_age"};
     return {};
 }
 
@@ -380,6 +381,11 @@ StrategyParams parse_strategy(simdjson::ondemand::object strat) {
                     sp.atr_stop_mult = req_f64(params_obj, "atr_stop_mult");
                 } else if (method == "time_stop") {
                     sp.time_stop_hours = req_f64(params_obj, "time_stop_hours");
+                } else if (method == "legacy_stop_loss") {
+                    sp.sl_upnl_pct = req_f64(params_obj, "sl_upnl_pct");
+                } else if (method == "legacy_unstuck") {
+                    sp.time_based_unstuck_pct = req_f64(params_obj, "time_based_unstuck_pct");
+                    sp.time_based_unstuck_age = static_cast<int>(req_f64(params_obj, "time_based_unstuck_age"));
                 }
             }
         }
@@ -387,12 +393,9 @@ StrategyParams parse_strategy(simdjson::ondemand::object strat) {
 
     // Common (top-level) strategy params
     sp.initial_qty_pct          = req_f64(strat, "initial_qty_pct");
-    sp.sl_upnl_pct              = req_f64(strat, "sl_upnl_pct");
     sp.n_positions              = static_cast<int>(req_u64(strat, "n_positions"));
     sp.parkinson_volatility_span = static_cast<int>(read_tf_param(strat, "parkinson_volatility_span", sp));
     sp.maker_fee_pct            = req_f64(strat, "maker_fee_pct");
-    sp.time_based_unstuck_pct   = opt_f64(strat, "time_based_unstuck_pct", 0.0);
-    sp.time_based_unstuck_age   = static_cast<int>(opt_f64(strat, "time_based_unstuck_age", 0.0));
     return sp;
 }
 

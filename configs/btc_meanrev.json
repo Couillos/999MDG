@@ -35,7 +35,6 @@
       "time_stop": { "time_stop_hours": 4.0 }
     },
     "initial_qty_pct": 0.01,
-    "sl_upnl_pct": 0,
     "n_positions": 1,
     "parkinson_volatility_span": 14,
     "maker_fee_pct": 0.001
@@ -94,7 +93,6 @@
         "time_stop": { "time_stop_hours": [2.0, 8.0, 1.0] }
       },
       "initial_qty_pct": [0.005, 0.02, 0.005],
-      "sl_upnl_pct": [-0.15, -0.01, 0.01],
       "n_positions": [1, 5, 1],
       "parkinson_volatility_span": [5, 30, 1],
       "maker_fee_pct": [0.0, 0.005, 0.0005]

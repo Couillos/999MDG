@@ -25,10 +25,14 @@
       }
     },
     "initial_qty_pct": 0.05,
-    "sl_upnl_pct": -0.1,
     "n_positions": 1,
     "parkinson_volatility_span": 12,
-    "maker_fee_pct": 0.001
+    "maker_fee_pct": 0.001,
+    "loss_algo": {
+      "legacy_stop_loss": {
+        "sl_upnl_pct": -0.1
+      }
+    }
   },
   "optimize": {
     "n_workers": 8,

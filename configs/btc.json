@@ -30,7 +30,16 @@
     "parkinson_volatility_span": 12,
     "maker_fee_pct": 0.001,
     "time_based_unstuck_pct": 0.05,
-    "time_based_unstuck_age": 336
+    "time_based_unstuck_age": 336,
+    "loss_algo": {
+      "legacy_stop_loss": {
+        "sl_upnl_pct": 0
+      },
+      "legacy_unstuck": {
+        "time_based_unstuck_pct": 0.05,
+        "time_based_unstuck_age": 336
+      }
+    }
   },
   "optimize": {
     "n_workers": 10,

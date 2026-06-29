@@ -34,12 +34,12 @@ struct StrategyParams {
     double double_down_factor;
     double close_grid_spacing_pct;
     int close_grid_count;
-    double sl_upnl_pct;
-    int n_positions;
-    int parkinson_volatility_span;
-    double maker_fee_pct;
-    double time_based_unstuck_pct;
-    int time_based_unstuck_age;
+    double sl_upnl_pct = 0.0;
+    int n_positions = 1;
+    int parkinson_volatility_span = 12;
+    double maker_fee_pct = 0.001;
+    double time_based_unstuck_pct = 0.0;
+    int time_based_unstuck_age = 0;
 
     // --- bb_reversion entry_condition params ---
     double bb_std_mult;

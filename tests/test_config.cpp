@@ -58,10 +58,14 @@ char const* VALID_JSON = R"({
             }
         },
         "initial_qty_pct": 0.03,
-        "sl_upnl_pct": -0.05,
         "n_positions": 2,
         "parkinson_volatility_span": 24,
-        "maker_fee_pct": 0.001
+        "maker_fee_pct": 0.001,
+        "loss_algo": {
+            "legacy_stop_loss": {
+                "sl_upnl_pct": -0.05
+            }
+        }
     },
     "output": {
         "dir": "results"
@@ -149,10 +153,14 @@ TEST(ConfigTest, WarmupCandles) {
                 }
             },
             "initial_qty_pct": 0.1,
-            "sl_upnl_pct": -0.05,
             "n_positions": 1,
             "parkinson_volatility_span": 48,
-            "maker_fee_pct": 0.001
+            "maker_fee_pct": 0.001,
+            "loss_algo": {
+                "legacy_stop_loss": {
+                    "sl_upnl_pct": -0.05
+                }
+            }
         },
         "output": { "dir": "out" }
     })");
@@ -206,10 +214,14 @@ TEST(ConfigTest, MartingaleZeroGridSpacingRejected) {
                 }
             },
             "initial_qty_pct": 0.05,
-            "sl_upnl_pct": -0.1,
             "n_positions": 1,
             "parkinson_volatility_span": 12,
-            "maker_fee_pct": 0.001
+            "maker_fee_pct": 0.001,
+            "loss_algo": {
+                "legacy_stop_loss": {
+                    "sl_upnl_pct": -0.1
+                }
+            }
         },
         "output": { "dir": "results" }
     })";
