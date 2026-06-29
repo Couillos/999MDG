@@ -2,11 +2,13 @@
 #include "config/types.h"
 #include "data/candle_manager.h"
 #include "data/symbol_info.h"
+#include "debug_log.h"
 #include "metrics/calculator.h"
 #include "optimizer/optimizer.h"
 #include "plot/plotter.h"
 #include "strategy/strategy.h"
 #include "ui/tui.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -47,6 +49,7 @@ static constexpr char const* BT_DIR = "backtests";
         "  %s optimize <config.json> [--backtest-best]\n"
         "  %s --tui                     Watch live optimization progress (ncurses)\n"
         "  %s --backtest-best           Backtest the #1 candidate from the most recent optimization\n"
+        "  -v (--verbose)             Enable debug logging to stderr\n"
         "\n"
         "Modes:\n"
         "  backtest <config>            Run a single backtest, output to backtests/\n"
@@ -478,8 +481,8 @@ static void run_optimize(Config const& cfg_in, bool backtest_best) {
         std::string("data/cache"));
     std::printf("  Loaded %zu symbols\n", symbols_info.size());
 
-    std::fprintf(stderr, "[DEBUG] [main] symbols_info ptr=%p size=%zu\n",
-                 (void*)&symbols_info, symbols_info.size());
+    DEBUG_LOG("[DEBUG] [main] symbols_info ptr=%p size=%zu\n",
+              (void*)&symbols_info, symbols_info.size());
 
     int max_warmup = cfg.warmup_candles;
     // DEFECT A fix: scan all four warmup-relevant params (not just the two that
@@ -518,14 +521,14 @@ static void run_optimize(Config const& cfg_in, bool backtest_best) {
     std::printf("  Total candles: %zu, per symbol: %zu, trading start: %zu\n",
                 loaded.candles.size(), loaded.candles.size() / n_sym,
                 loaded.trading_start_idx);
-    std::fprintf(stderr, "[DEBUG] [main] per_symbol[0] candles ptr=%p size=%zu\n",
-                 (void*)&per_symbol[0].candles, per_symbol[0].candles.size());
+    DEBUG_LOG("[DEBUG] [main] per_symbol[0] candles ptr=%p size=%zu\n",
+              (void*)&per_symbol[0].candles, per_symbol[0].candles.size());
 
     auto const mtf_data = load_all_mtf_candles(cfg);
     for (auto const& [tf, vlc] : mtf_data) {
         for (size_t si = 0; si < vlc.size(); ++si) {
-            std::fprintf(stderr, "[DEBUG] [main] mtf[%s][%zu] candles ptr=%p size=%zu\n",
-                         tf.c_str(), si, (void*)&vlc[si].candles, vlc[si].candles.size());
+            DEBUG_LOG("[DEBUG] [main] mtf[%s][%zu] candles ptr=%p size=%zu\n",
+                      tf.c_str(), si, (void*)&vlc[si].candles, vlc[si].candles.size());
         }
     }
 
@@ -674,11 +677,12 @@ int main(int argc, char** argv) {
     std::string const config_path(argv[2]);
     bool backtest_best = false;
 
-    // Parse optional flags (only --backtest-best is supported as a flag here;
-    // --tui is a standalone mode handled above)
+    // Parse optional flags (--backtest-best, -v for verbose debug logs)
     for (int i = 3; i < argc; ++i) {
         if (std::strcmp(argv[i], "--backtest-best") == 0) {
             backtest_best = true;
+        } else if (std::strcmp(argv[i], "-v") == 0 || std::strcmp(argv[i], "--verbose") == 0) {
+            g_verbose = true;
         } else {
             std::fprintf(stderr, "Unknown argument: %s\n", argv[i]);
             usage(argv[0]);

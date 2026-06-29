@@ -1,5 +1,6 @@
 #include "plotter.h"
 #include "colors.h"
+#include "debug_log.h"
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
@@ -147,7 +148,7 @@ void Plotter::chart_preamble(FILE* gp, const char* png_name) const {
 void Plotter::equity_chart() {
     FILE* gp = popen("gnuplot -p 2>/dev/null", "w");
     if (!gp) {
-        std::fprintf(stderr, "Warning: gnuplot not available, skipping equity_chart.png\n");
+        DEBUG_LOG("Warning: gnuplot not available, skipping equity_chart.png\n");
         return;
     }
 
@@ -193,14 +194,14 @@ void Plotter::equity_chart() {
     if (ret == 0) {
         std::printf("  Wrote %s\n", (dir_ + "/equity_chart.png").c_str());
     } else {
-        std::fprintf(stderr, "Warning: gnuplot exited with code %d for equity_chart\n", ret);
+        DEBUG_LOG("Warning: gnuplot exited with code %d for equity_chart\n", ret);
     }
 }
 
 void Plotter::exposure_chart() {
     FILE* gp = popen("gnuplot -p 2>/dev/null", "w");
     if (!gp) {
-        std::fprintf(stderr, "Warning: gnuplot not available, skipping exposure_chart.png\n");
+        DEBUG_LOG("Warning: gnuplot not available, skipping exposure_chart.png\n");
         return;
     }
 
@@ -216,14 +217,14 @@ void Plotter::exposure_chart() {
     if (ret == 0) {
         std::printf("  Wrote %s\n", (dir_ + "/exposure_chart.png").c_str());
     } else {
-        std::fprintf(stderr, "Warning: gnuplot exited with code %d for exposure_chart\n", ret);
+        DEBUG_LOG("Warning: gnuplot exited with code %d for exposure_chart\n", ret);
     }
 }
 
 void Plotter::pnl_per_symbol_chart() {
     FILE* gp = popen("gnuplot -p 2>/dev/null", "w");
     if (!gp) {
-        std::fprintf(stderr, "Warning: gnuplot not available, skipping pnl_per_symbol.png\n");
+        DEBUG_LOG("Warning: gnuplot not available, skipping pnl_per_symbol.png\n");
         return;
     }
 
@@ -248,7 +249,7 @@ void Plotter::pnl_per_symbol_chart() {
     if (ret == 0) {
         std::printf("  Wrote %s\n", (dir_ + "/pnl_per_symbol.png").c_str());
     } else {
-        std::fprintf(stderr, "Warning: gnuplot exited with code %d for pnl_per_symbol\n", ret);
+        DEBUG_LOG("Warning: gnuplot exited with code %d for pnl_per_symbol\n", ret);
     }
 }
 

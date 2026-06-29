@@ -1,4 +1,5 @@
 #include "cache.h"
+#include "debug_log.h"
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
@@ -226,8 +227,8 @@ std::optional<CacheResult> try_load_cache(const std::string& hash) {
     // Fix for audit issues D3/D4: validate count to prevent buffer over-read
     // and integer overflow. count * sizeof(Candle) must fit in file_size.
     if (count > (file_size - sizeof(CacheHeader)) / sizeof(Candle)) {
-        std::fprintf(stderr, "Warning: cache file %s has corrupt count=%zu\n",
-                     path.c_str(), count);
+        DEBUG_LOG("Warning: cache file %s has corrupt count=%zu\n",
+                  path.c_str(), count);
         ::munmap(mapped, file_size);
         ::close(fd);
         return std::nullopt;

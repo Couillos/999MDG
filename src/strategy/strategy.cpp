@@ -11,7 +11,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
-#include <cstdio>
 #include <filesystem>
 #include <numeric>
 #include <string>
@@ -32,12 +31,14 @@ static std::atomic<double> debug_strat_loss_time_ms{0};
 static std::atomic<double> debug_strat_entry_time_ms{0};
 static std::atomic<double> debug_strat_pv_time_ms{0};
 
+#include "debug_log.h"
+
 static void log_strat_stats() {
     static thread_local auto last_log = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration<double>(now - last_log).count() < 5.0) return;
     last_log = now;
-    std::fprintf(stderr,
+    DEBUG_LOG(
         "[DEBUG] [strategy] candles=%zu pos_candles=%zu entry_cond=%zu closes=%zu(calls=%zu time=%.0fms) loss=%zu(calls=%zu time=%.0fms) entries=%zu(calls=%zu time=%.0fms) pv_time=%.0fms\n",
         debug_strat_candle_count.load(), debug_strat_position_candle_count.load(),
         debug_strat_entry_condition_calls.load(),
@@ -664,8 +665,8 @@ BacktestResult run_backtest(const Config& cfg,
         // Periodic debug log
         if (i % 50000 == 0 && i > 0) {
             log_strat_stats();
-            std::fprintf(stderr, "[DEBUG] [strategy] candle %zu/%zu (%.0f%%) pos_count=%d balance=%.2f\n",
-                         i, nc, 100.0 * i / nc, total_positions, balance);
+            DEBUG_LOG("[DEBUG] [strategy] candle %zu/%zu (%.0f%%) pos_count=%d balance=%.2f\n",
+                      i, nc, 100.0 * i / nc, total_positions, balance);
         }
 
         // Record equity point (floored at 0 when bankrupt)
@@ -719,7 +720,7 @@ BacktestResult run_backtest(const Config& cfg,
     }
 
     // ── DEBUG: summary per backtest run ──
-    std::fprintf(stderr,
+    DEBUG_LOG(
         "[DEBUG] [strategy] BACKTEST DONE: total_candles=%zu position_candles=%zu equity_points=%zu\n"
         "[DEBUG] [strategy]   entry_cond_calls=%zu close_calls=%zu loss_calls=%zu entry_calls=%zu\n"
         "[DEBUG] [strategy]   time_ms: pv=%.0f closes=%.0f loss=%.0f entries=%.0f\n",

@@ -1,8 +1,8 @@
 #include "z_stop.h"
+#include "debug_log.h"
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <thread>
 namespace powermdg {
 namespace {
@@ -15,7 +15,7 @@ static void log_zstop_stats() {
     auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration<double>(now - last_log).count() < 5.0) return;
     last_log = now;
-    std::fprintf(stderr,
+    DEBUG_LOG(
         "[DEBUG] [z_stop] entry=%zu\n",
         debug_zstop_calls.load());
 }

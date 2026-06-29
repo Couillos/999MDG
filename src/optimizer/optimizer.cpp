@@ -1,4 +1,5 @@
 #include "optimizer.h"
+#include "debug_log.h"
 #include "metrics/calculator.h"
 #include "optimizer/nsga2.h"
 #include "strategy/strategy.h"
@@ -837,22 +838,22 @@ OptimizerResult run_optimization(
                 pop_size, n_gen, n_params, scoring.size());
 
     // ── DEBUG: data sharing verification ──
-    std::fprintf(stderr, "[DEBUG] per_symbol_candles ptr=%p size=%zu\n",
-                 (void*)&per_symbol_candles, per_symbol_candles.size());
-    std::fprintf(stderr, "[DEBUG] symbols_info ptr=%p size=%zu\n",
-                 (void*)&symbols_info, symbols_info.size());
+    DEBUG_LOG("[DEBUG] per_symbol_candles ptr=%p size=%zu\n",
+              (void*)&per_symbol_candles, per_symbol_candles.size());
+    DEBUG_LOG("[DEBUG] symbols_info ptr=%p size=%zu\n",
+              (void*)&symbols_info, symbols_info.size());
     for (auto const& [tf, vlc] : mtf_candles) {
-        std::fprintf(stderr, "[DEBUG] mtf_candles[%s] ptr=%p size=%zu\n",
-                     tf.c_str(), (void*)&vlc, vlc.size());
+        DEBUG_LOG("[DEBUG] mtf_candles[%s] ptr=%p size=%zu\n",
+                  tf.c_str(), (void*)&vlc, vlc.size());
         for (size_t si = 0; si < vlc.size(); ++si) {
-            std::fprintf(stderr, "[DEBUG]   mtf[%s][%zu] candles ptr=%p size=%zu\n",
-                         tf.c_str(), si, (void*)&vlc[si].candles, vlc[si].candles.size());
+            DEBUG_LOG("[DEBUG]   mtf[%s][%zu] candles ptr=%p size=%zu\n",
+                      tf.c_str(), si, (void*)&vlc[si].candles, vlc[si].candles.size());
         }
     }
     for (size_t si = 0; si < per_symbol_candles.size(); ++si) {
-        std::fprintf(stderr, "[DEBUG] per_symbol_candles[%zu] candles ptr=%p size=%zu\n",
-                     si, (void*)&per_symbol_candles[si].candles,
-                     per_symbol_candles[si].candles.size());
+        DEBUG_LOG("[DEBUG] per_symbol_candles[%zu] candles ptr=%p size=%zu\n",
+                  si, (void*)&per_symbol_candles[si].candles,
+                  per_symbol_candles[si].candles.size());
     }
 
     // 2. Random initial population
@@ -877,8 +878,8 @@ OptimizerResult run_optimization(
 
     // 5. Evaluate initial population in parallel
     {
-        std::fprintf(stderr, "[DEBUG] Evaluating initial pop of %d individuals with %d workers...\n",
-                     pop_size, pool.worker_count());
+        DEBUG_LOG("[DEBUG] Evaluating initial pop of %d individuals with %d workers...\n",
+                  pop_size, pool.worker_count());
     }
     std::vector<Individual> population(static_cast<size_t>(pop_size));
     {
@@ -896,10 +897,10 @@ OptimizerResult run_optimization(
                     // Log first few evaluations with data ptrs
                     size_t const cnt = eval_count.fetch_add(1, std::memory_order_relaxed);
                     if (cnt < 5) {
-                        std::fprintf(stderr, "[DEBUG] eval idx=%zu thread=%zx", idx, std::hash<std::thread::id>{}(tid));
-                        std::fprintf(stderr, " cfg=0x%zx", std::hash<const void*>{}(&base_cfg));
-                        std::fprintf(stderr, " candles=%p", (void*)&per_symbol_candles[0].candles);
-                        std::fprintf(stderr, " mtf_candles=%p\n", (void*)mtf_candles.empty() ? nullptr : (void*)&mtf_candles.begin()->second[0].candles);
+                        DEBUG_LOG("[DEBUG] eval idx=%zu thread=%zx", idx, std::hash<std::thread::id>{}(tid));
+                        DEBUG_LOG(" cfg=0x%zx", std::hash<const void*>{}(&base_cfg));
+                        DEBUG_LOG(" candles=%p", (void*)&per_symbol_candles[0].candles);
+                        DEBUG_LOG(" mtf_candles=%p\n", (void*)mtf_candles.empty() ? nullptr : (void*)&mtf_candles.begin()->second[0].candles);
                     }
 
                     auto t0 = std::chrono::steady_clock::now();
@@ -911,8 +912,8 @@ OptimizerResult run_optimization(
 
                     // Log timing for first few + periodic
                     if (cnt < 5 || cnt % 10 == 0 || ms > 500) {
-                        std::fprintf(stderr, "[DEBUG] eval idx=%zu thread=%zx done in %.0f ms (cnt=%zu)\n",
-                                     idx, std::hash<std::thread::id>{}(tid), ms, cnt);
+                        DEBUG_LOG("[DEBUG] eval idx=%zu thread=%zx done in %.0f ms (cnt=%zu)\n",
+                                  idx, std::hash<std::thread::id>{}(tid), ms, cnt);
                     }
                 }
             });
@@ -920,8 +921,8 @@ OptimizerResult run_optimization(
         pool.wait();
         auto eval_end = std::chrono::steady_clock::now();
         double const total_sec = std::chrono::duration<double>(eval_end - eval_start).count();
-        std::fprintf(stderr, "[DEBUG] Initial pop evaluated: %zu individuals in %.1f s (avg %.0f ms/eval)\n",
-                     population.size(), total_sec, total_sec * 1000.0 / population.size());
+        DEBUG_LOG("[DEBUG] Initial pop evaluated: %zu individuals in %.1f s (avg %.0f ms/eval)\n",
+                  population.size(), total_sec, total_sec * 1000.0 / population.size());
     }
 
     // 6. Compute objectives + environmental selection for initial pop
@@ -939,7 +940,7 @@ OptimizerResult run_optimization(
     // 7. Generations loop
     for (int gen = 1; gen <= n_gen; ++gen) {
         auto gen_start = std::chrono::steady_clock::now();
-        std::fprintf(stderr, "[DEBUG] === Generation %d/%d starting ===\n", gen, n_gen);
+        DEBUG_LOG("[DEBUG] === Generation %d/%d starting ===\n", gen, n_gen);
 
         size_t const off_size = static_cast<size_t>(pop_size);
         std::vector<Individual> offspring(off_size);
@@ -966,14 +967,14 @@ OptimizerResult run_optimization(
                 offspring[i + 1].generation = gen;
             }
             auto t1 = std::chrono::steady_clock::now();
-            std::fprintf(stderr, "[DEBUG]   Offspring creation: %.1f ms\n",
-                         std::chrono::duration<double, std::milli>(t1 - t0).count());
+            DEBUG_LOG("[DEBUG]   Offspring creation: %.1f ms\n",
+                      std::chrono::duration<double, std::milli>(t1 - t0).count());
         }
 
         // Evaluate offspring in parallel
         {
-            std::fprintf(stderr, "[DEBUG]   Evaluating %zu offspring with %d workers...\n",
-                         off_size, pool.worker_count());
+            DEBUG_LOG("[DEBUG]   Evaluating %zu offspring with %d workers...\n",
+                      off_size, pool.worker_count());
             std::atomic<size_t> eval_idx{0};
             auto eval_start = std::chrono::steady_clock::now();
             int const nw = pool.worker_count();
@@ -993,8 +994,8 @@ OptimizerResult run_optimization(
                         double const ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
                         if (++local_cnt == 1 || ms > 1000) {
-                            std::fprintf(stderr, "[DEBUG]     eval gen=%d idx=%zu thread=%zx done in %.0f ms\n",
-                                         gen, idx, std::hash<std::thread::id>{}(tid), ms);
+                            DEBUG_LOG("[DEBUG]     eval gen=%d idx=%zu thread=%zx done in %.0f ms\n",
+                                      gen, idx, std::hash<std::thread::id>{}(tid), ms);
                         }
                     }
                 });
@@ -1002,8 +1003,8 @@ OptimizerResult run_optimization(
             pool.wait();
             auto eval_end = std::chrono::steady_clock::now();
             double const eval_sec = std::chrono::duration<double>(eval_end - eval_start).count();
-            std::fprintf(stderr, "[DEBUG]   Offspring evaluated: %zu in %.1f s (avg %.0f ms/eval)\n",
-                         off_size, eval_sec, eval_sec * 1000.0 / off_size);
+            DEBUG_LOG("[DEBUG]   Offspring evaluated: %zu in %.1f s (avg %.0f ms/eval)\n",
+                      off_size, eval_sec, eval_sec * 1000.0 / off_size);
         }
 
         // Combined = parents + offspring
@@ -1052,8 +1053,8 @@ OptimizerResult run_optimization(
 
         auto gen_end = std::chrono::steady_clock::now();
         double const gen_sec = std::chrono::duration<double>(gen_end - gen_start).count();
-        std::fprintf(stderr, "[DEBUG] === Generation %d/%d done in %.1f s ===\n",
-                     gen, n_gen, gen_sec);
+        DEBUG_LOG("[DEBUG] === Generation %d/%d done in %.1f s ===\n",
+                  gen, n_gen, gen_sec);
     }
 
     // 8. Close temp file

@@ -1,9 +1,9 @@
 #include "zscore_ou.h"
+#include "debug_log.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <thread>
 namespace powermdg {
 namespace {
@@ -20,8 +20,8 @@ static thread_local bool debug_tid_logged = false;
 static void log_thread_once() {
     if (!debug_tid_logged) {
         debug_tid_logged = true;
-        std::fprintf(stderr, "[DEBUG] [zscore_ou] thread=%zx\n",
-                     std::hash<std::thread::id>{}(std::this_thread::get_id()));
+        DEBUG_LOG("[DEBUG] [zscore_ou] thread=%zx\n",
+                  std::hash<std::thread::id>{}(std::this_thread::get_id()));
     }
 }
 
@@ -33,13 +33,13 @@ static void log_stats_if_needed() {
     auto ac = debug_atr_calls.load();
     auto mc = debug_median_atr_calls.load();
     auto mi = debug_median_atr_inner_atr_calls.load();
-    std::fprintf(stderr,
+    DEBUG_LOG(
         "[DEBUG] [zscore_ou] calls: atr=%zu median_atr=%zu (atrs_computed=%zu)\n",
         ac, mc, mi);
-    std::fprintf(stderr,
+    DEBUG_LOG(
         "[DEBUG] [zscore_ou] tot_n: atr=%zu\n",
         debug_atr_total_n.load());
-    std::fprintf(stderr,
+    DEBUG_LOG(
         "[DEBUG] [zscore_ou] time_ms: atr=%.0f median_atr=%.0f\n",
         debug_atr_time_ms.load(), debug_median_atr_time_ms.load());
 }

@@ -1,6 +1,7 @@
 #include "candle_manager.h"
 #include "binance_client.h"
 #include "cache.h"
+#include "debug_log.h"
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -185,10 +186,10 @@ std::optional<std::vector<Candle>> read_daily_file(const std::string& path) {
     auto const col_dbl = static_cast<size_t>(count) * sizeof(double);
     size_t const expected = sizeof(uint32_t) + col_ts + 5 * col_dbl;
     if (expected > raw_size) {
-        std::fprintf(stderr, "Warning: corrupt daily file %s (count=%u, expected=%llu, raw=%llu)\n",
-                     path.c_str(), count,
-                     static_cast<unsigned long long>(expected),
-                     static_cast<unsigned long long>(raw_size));
+        DEBUG_LOG("Warning: corrupt daily file %s (count=%u, expected=%llu, raw=%llu)\n",
+                  path.c_str(), count,
+                  static_cast<unsigned long long>(expected),
+                  static_cast<unsigned long long>(raw_size));
         return std::nullopt;
     }
 
@@ -266,14 +267,14 @@ LoadedCandles load_candles(const Config& cfg) {
     static std::atomic<int> load_count{0};
     int n = ++load_count;
     auto load_start = std::chrono::steady_clock::now();
-    std::fprintf(stderr, "[DEBUG] [candle_manager] load_candles() CALL #%d: timeframe=%s symbols=[",
-                 n, cfg.timeframe.c_str());
+    DEBUG_LOG("[DEBUG] [candle_manager] load_candles() CALL #%d: timeframe=%s symbols=[",
+              n, cfg.timeframe.c_str());
     for (size_t si = 0; si < cfg.symbols.size(); ++si) {
-        if (si > 0) std::fprintf(stderr, ",");
-        std::fprintf(stderr, "%s", cfg.symbols[si].c_str());
+        if (si > 0) DEBUG_LOG(",");
+        DEBUG_LOG("%s", cfg.symbols[si].c_str());
     }
-    std::fprintf(stderr, "] date_from=%s date_to=%s warmup=%d\n",
-                 cfg.date_from.c_str(), cfg.date_to.c_str(), cfg.warmup_candles);
+    DEBUG_LOG("] date_from=%s date_to=%s warmup=%d\n",
+              cfg.date_from.c_str(), cfg.date_to.c_str(), cfg.warmup_candles);
 
     // 1. Parse dates & timeframe
     auto const date_from_ms = parse_date_ms(cfg.date_from);
@@ -329,9 +330,9 @@ LoadedCandles load_candles(const Config& cfg) {
                                         path.c_str(), day_candles.size());
                         }
                     } else if (!candles) {
-                        std::fprintf(stderr, "Warning: failed to fetch %s %s %ld..%ld\n",
-                                     sym.c_str(), cfg.timeframe.c_str(),
-                                     static_cast<long>(chunk_start), static_cast<long>(chunk_end));
+                        DEBUG_LOG("Warning: failed to fetch %s %s %ld..%ld\n",
+                                 sym.c_str(), cfg.timeframe.c_str(),
+                                 static_cast<long>(chunk_start), static_cast<long>(chunk_end));
                     }
                 }
 
@@ -384,7 +385,7 @@ LoadedCandles load_candles(const Config& cfg) {
 
     auto load_end = std::chrono::steady_clock::now();
     double load_sec = std::chrono::duration<double>(load_end - load_start).count();
-    std::fprintf(stderr, "[DEBUG] [candle_manager] load_candles() #%d DONE: %zu candles in %.1f s\n",
+    DEBUG_LOG("[DEBUG] [candle_manager] load_candles() #%d DONE: %zu candles in %.1f s\n",
                  n, all_candles.size(), load_sec);
 
     return {std::move(all_candles), trading_start};

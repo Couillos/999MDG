@@ -1,9 +1,9 @@
 #include "atr_stop.h"
+#include "debug_log.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <thread>
 namespace powermdg {
 namespace {
@@ -18,7 +18,7 @@ static void log_atr_stop_stats() {
     auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration<double>(now - last_log).count() < 5.0) return;
     last_log = now;
-    std::fprintf(stderr,
+    DEBUG_LOG(
         "[DEBUG] [atr_stop] entry=%zu atr_calls=%zu atr_time=%.0fms\n",
         debug_atr_stop_calls.load(), debug_atr_stop_atr_calls.load(),
         debug_atr_stop_atr_time_ms.load());

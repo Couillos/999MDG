@@ -1,4 +1,5 @@
 #include "binance_client.h"
+#include "debug_log.h"
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -111,12 +112,12 @@ std::optional<std::string> BinanceClient::http_get(const std::string& url) {
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
-        std::fprintf(stderr, "Warning: CURL error %d (%s) on %s\n",
-                     static_cast<int>(res), curl_easy_strerror(res), url.c_str());
+        DEBUG_LOG("Warning: CURL error %d (%s) on %s\n",
+                  static_cast<int>(res), curl_easy_strerror(res), url.c_str());
         return std::nullopt;
     }
     if (http_code != 200) {
-        std::fprintf(stderr, "Warning: HTTP %ld on %s\n", http_code, url.c_str());
+        DEBUG_LOG("Warning: HTTP %ld on %s\n", http_code, url.c_str());
         return std::nullopt;
     }
 

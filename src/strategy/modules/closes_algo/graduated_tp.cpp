@@ -1,9 +1,9 @@
 #include "graduated_tp.h"
+#include "debug_log.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <thread>
 namespace powermdg {
 namespace {
@@ -18,7 +18,7 @@ static void log_gtp_stats() {
     auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration<double>(now - last_log).count() < 5.0) return;
     last_log = now;
-    std::fprintf(stderr,
+    DEBUG_LOG(
         "[DEBUG] [graduated_tp] entry=%zu atr=%zu | atr_time=%.0fms\n",
         debug_gtp_entry_calls.load(), debug_gtp_atr_calls.load(),
         debug_gtp_atr_time_ms.load());

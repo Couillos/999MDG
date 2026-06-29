@@ -1,9 +1,9 @@
 #include "parkinson_volatility.h"
+#include "debug_log.h"
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
-#include <cstdio>
 #include <thread>
 
 namespace powermdg {
@@ -21,7 +21,7 @@ static void log_pv_stats() {
     size_t c = debug_pv_calls.load();
     size_t ts = debug_pv_total_span.load();
     double tm = debug_pv_time_ms.load();
-    std::fprintf(stderr,
+    DEBUG_LOG(
         "[DEBUG] [parkinson_vol] calls=%zu avg_span=%.1f total_time=%.0fms\n",
         c, c > 0 ? static_cast<double>(ts) / c : 0.0, tm);
 }

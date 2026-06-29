@@ -4,7 +4,7 @@
 #include "legacy_unstuck.h"
 #include "time_stop.h"
 #include "z_stop.h"
-#include <cstdio>
+#include "debug_log.h"
 namespace powermdg {
 
 std::unique_ptr<ILossModule> create_loss_module(const std::string& name) {
@@ -13,7 +13,7 @@ std::unique_ptr<ILossModule> create_loss_module(const std::string& name) {
     if (name == "z_stop") return std::make_unique<ZStop>();
     if (name == "atr_stop") return std::make_unique<AtrStop>();
     if (name == "time_stop") return std::make_unique<TimeStop>();
-    std::fprintf(stderr, "Unknown loss_module: '%s'\nAvailable: legacy_stop_loss, legacy_unstuck, z_stop, atr_stop, time_stop\n", name.c_str());
+    DEBUG_LOG("Unknown loss_module: '%s'\nAvailable: legacy_stop_loss, legacy_unstuck, z_stop, atr_stop, time_stop\n", name.c_str());
     return nullptr;
 }
 
