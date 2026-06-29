@@ -14,23 +14,23 @@
     },
     "entries_algo": {
       "martingale": {
-        "entry_grid_spacing_pct": 0.02,
+        "entry_grid_spacing_pct": 0.03,
         "double_down_factor": 0.5
       }
     },
     "closes_algo": {
       "simple_grid": {
-        "close_grid_spacing_pct": 0.01,
-        "close_grid_count": 2
+        "close_grid_spacing_pct": 0.002,
+        "close_grid_count": 5
       }
     },
-    "initial_qty_pct": 0.05,
-    "sl_upnl_pct": -0.1,
+    "initial_qty_pct": 0.03,
+    "sl_upnl_pct": -0.9,
     "n_positions": 1,
     "parkinson_volatility_span": 12,
     "maker_fee_pct": 0.001,
-    "time_based_unstuck_pct": 0.05,
-    "time_based_unstuck_age": 24
+    "time_based_unstuck_pct": 0.2,
+    "time_based_unstuck_age": 168
   },
   "optimize": {
     "n_workers": 10,
@@ -38,14 +38,12 @@
       "limits": {
 	  "loss_profit_ratio": {"max": 0.2},
 	  "drawdown_worst": {"max": 0.5},
-	  "position_held_hours_max": {"max": 1250},
-	  "gain": {"min": 0.5}
+	  "position_held_hours_max": {"max": 1250}
       },
     "scoring": [
       {"metric": "sharpe_ratio_usd", "goal": "max", "weight": 1.0},
       {"metric": "calmar_ratio_usd", "goal": "max", "weight": 1.0},
-      {"metric": "mdg_usd", "goal": "max", "weight": 0.8},
-      {"metric": "peak_recovery_hours_equity_usd", "goal": "min", "weight": 0.3}
+      {"metric": "adg_usd", "goal": "max", "weight": 1.0},
     ],
     "ga": {
       "population_size": 1000,
