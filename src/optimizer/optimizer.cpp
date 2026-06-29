@@ -139,6 +139,30 @@ void apply_param_to_cfg(Config& cfg, const std::string& name, double value) {
     } else if (name == "overshoot_pct") {
         cfg.strategy.overshoot_pct = value;
     } else if (name == "tp_min_upnl_pct") {
+    } else if (name == "zscore_entry_threshold") {
+        cfg.strategy.zscore_entry_threshold = value;
+    } else if (name == "zscore_vwap_lookback") {
+        cfg.strategy.zscore_vwap_lookback = static_cast<int>(value);
+    } else if (name == "tp1_z_threshold") {
+        cfg.strategy.tp1_z_threshold = value;
+    } else if (name == "tp1_frac") {
+        cfg.strategy.tp1_frac = value;
+    } else if (name == "tp2_z_threshold") {
+        cfg.strategy.tp2_z_threshold = value;
+    } else if (name == "tp2_frac") {
+        cfg.strategy.tp2_frac = value;
+    } else if (name == "trailing_atr_mult") {
+        cfg.strategy.trailing_atr_mult = value;
+    } else if (name == "z_stop_threshold") {
+        cfg.strategy.z_stop_threshold = value;
+    } else if (name == "atr_period") {
+        cfg.strategy.atr_period = static_cast<int>(value);
+    } else if (name == "atr_stop_mult") {
+        cfg.strategy.atr_stop_mult = value;
+    } else if (name == "time_stop_hours") {
+        cfg.strategy.time_stop_hours = value;
+    } else if (name == "atr_filter_mult") {
+        cfg.strategy.atr_filter_mult = value;
         cfg.strategy.tp_min_upnl_pct = value;
         cfg.strategy.time_based_unstuck_age = static_cast<int>(value);
     }

@@ -11,13 +11,21 @@ set(POWERMDG_SOURCES
     strategy/strategy.cpp
     strategy/modules/entry_condition/entry_condition.cpp
     strategy/modules/entry_condition/ema_dist_pct.cpp
+    strategy/modules/entry_condition/zscore_ou.cpp
     strategy/modules/entry_condition/bb_reversion.cpp
     strategy/modules/entries_algo/entries_algo.cpp
     strategy/modules/entries_algo/martingale.cpp
     strategy/modules/entries_algo/dca_linear.cpp
     strategy/modules/closes_algo/closes_algo.cpp
     strategy/modules/closes_algo/simple_grid.cpp
+    strategy/modules/closes_algo/graduated_tp.cpp
     strategy/modules/closes_algo/mean_revert_tp.cpp
+    strategy/modules/loss_modules/loss_module.cpp
+    strategy/modules/loss_modules/legacy_stop_loss.cpp
+    strategy/modules/loss_modules/legacy_unstuck.cpp
+    strategy/modules/loss_modules/z_stop.cpp
+    strategy/modules/loss_modules/atr_stop.cpp
+    strategy/modules/loss_modules/time_stop.cpp
     metrics/calculator.cpp
     utils/thread_pool.cpp
     optimizer/optimizer.cpp

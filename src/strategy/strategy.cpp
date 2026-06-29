@@ -3,8 +3,9 @@
 #include "strategy/modules/entry_condition/entry_condition.h"
 #include "strategy/modules/entries_algo/entries_algo.h"
 #include "strategy/parkinson_volatility.h"
-#include "strategy/stop_loss.h"
-#include "strategy/unstuck.h"
+#include "strategy/modules/loss_modules/loss_module.h"
+#include "data/candle_manager.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -13,6 +14,8 @@
 #include <numeric>
 #include <string>
 #include <vector>
+#include <set>
+#include <map>
 
 namespace powermdg {
 namespace {
@@ -29,6 +32,7 @@ double total_exposure(const std::vector<Position>& positions,
     for (size_t i = 0; i < positions.size(); ++i) {
         sum += positions[i].total_qty * candles[i]->close;
     }
+
     return sum;
 }
 
@@ -92,6 +96,49 @@ void execute_double_down(Position& pos, const EntryOrder& eo, const Candle& cand
 
 } // anonymous namespace
 
+
+/// Build the tf_data map for a given symbol at a given tick.
+/// Uses the LAST CLOSED HTF candle (not the forming one).
+std::map<std::string, TfCandles> build_tf_data(
+    size_t s, int64_t cur_ts,
+    const std::map<std::string, std::vector<LoadedCandles>>& mtf_candles,
+    bool need_mtf)
+{
+    std::map<std::string, TfCandles> tfd;
+    if (!need_mtf) return tfd;
+    for (auto const& [tf, vlc] : mtf_candles) {
+        if (s >= vlc.size()) continue;
+        auto const& candles = vlc[s].candles;
+        if (candles.empty()) continue;
+        // Find the last CLOSED HTF candle: the one whose NEXT candle's
+        // open timestamp is <= cur_ts. If no next candle, this is the
+        // latest candle and it's still forming — use the previous one.
+        size_t last_closed = 0;
+        for (size_t j = 0; j + 1 < candles.size(); ++j) {
+            if (candles[j + 1].timestamp <= cur_ts) {
+                last_closed = j + 1;
+            } else {
+                break;
+            }
+        }
+        // last_closed now points to the latest HTF candle whose open time <= cur_ts
+        // AND whose next candle also starts before cur_ts (meaning it's closed).
+        // But if last_closed's next candle starts AFTER cur_ts, then last_closed
+        // is the forming candle — we need last_closed - 1.
+        // Actually: if candles[last_closed+1].timestamp > cur_ts, then
+        // candles[last_closed] is still forming. Use last_closed as-is only if
+        // it's the last candle in the array (edge case at end of data).
+        // Otherwise, use last_closed - 1 to get the truly closed candle.
+        // Wait — let's think more carefully:
+        // candles[last_closed].timestamp <= cur_ts (forming or just opened)
+        // candles[last_closed+1].timestamp > cur_ts (hasn't started yet)
+        // So candles[last_closed] is the FORMING candle. We want the one BEFORE it.
+        if (last_closed > 0) last_closed--;  // Use the previous (closed) candle
+        tfd[tf] = {tf, std::span<const Candle>(candles), last_closed};
+    }
+    return tfd;
+}
+
 BacktestResult run_backtest(const Config& cfg,
                             const std::vector<LoadedCandles>& per_symbol_candles,
                             const std::vector<SymbolInfo>& symbols_info,
@@ -110,13 +157,42 @@ BacktestResult run_backtest(const Config& cfg,
     auto entry_condition = create_entry_condition(cfg.strategy.entry_condition_type);
     auto entries_algo = create_entries_algo(cfg.strategy.entries_algo_type);
     auto closes_algo = create_closes_algo(cfg.strategy.closes_algo_type);
+    auto loss_modules = powermdg::create_loss_modules(cfg.strategy.loss_algo_types);
+    if (cfg.strategy.loss_algo_types.empty()) {
+        // Default: use legacy stop_loss + unstuck
+        loss_modules = powermdg::create_loss_modules({"legacy_stop_loss", "legacy_unstuck"});
+    }
     if (!entry_condition || !entries_algo || !closes_algo) {
         std::fprintf(stderr, "Failed to create strategy modules\n");
         return {};
     }
 
     // Aggregate data needs — only compute indicators that at least one active module requires
-    DataNeed const needs = entry_condition->data_needs() | entries_algo->data_needs() | closes_algo->data_needs();
+    DataNeed needs = entry_condition->data_needs() | entries_algo->data_needs() | closes_algo->data_needs();
+    for (auto const& lm : loss_modules) needs = needs | lm->data_needs();
+    bool const need_mtf = powermdg::needs(needs, DataNeed::MultiTimeframe);
+
+    // Collect all timeframes needed by the config
+    // Base timeframe is always loaded. Additional timeframes come from indicator_timeframes map.
+    std::set<std::string> needed_tfs;
+    needed_tfs.insert(cfg.timeframe);
+    if (need_mtf) {
+        for (auto const& [param_name, tf] : cfg.strategy.indicator_timeframes) {
+            if (!tf.empty()) needed_tfs.insert(tf);
+        }
+    }
+    // Load candle data for each needed timeframe (skip base — already loaded)
+    std::map<std::string, std::vector<LoadedCandles>> mtf_candles;
+    for (auto const& tf : needed_tfs) {
+        if (tf == cfg.timeframe) continue;
+        Config mtf_cfg = cfg;
+        mtf_cfg.timeframe = tf;
+        mtf_candles[tf] = {};
+        for (size_t s = 0; s < n; ++s) {
+            LoadedCandles lc = load_candles(mtf_cfg);
+            mtf_candles[tf].push_back(std::move(lc));
+        }
+    }
     bool const need_ema = powermdg::needs(needs, DataNeed::Ema) || powermdg::needs(needs, DataNeed::RollingStdev);
     bool const need_stdev = powermdg::needs(needs, DataNeed::RollingStdev);
     bool const need_candles = powermdg::needs(needs, DataNeed::CandleSeries);
@@ -230,7 +306,9 @@ BacktestResult run_backtest(const Config& cfg,
                 ModuleContext ctx{cfg, symbols_info[s], *current_candles[s],
                                   positions[s], balance, static_cast<int64_t>(i),
                                   need_ema ? ema_values[s] : 0.0, rstd,
-                                  need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{}};
+                                  need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{},
+                                  i,
+                                  build_tf_data(s, current_candles[s]->timestamp, mtf_candles, need_mtf)};
                 auto close_orders = closes_algo->compute_closes(ctx);
                 for (auto const& co : close_orders) {
                     execute_close(positions[s], co, *current_candles[s], cfg);
@@ -246,11 +324,27 @@ BacktestResult run_backtest(const Config& cfg,
             }
         }
 
-        // ── Step b: STOP LOSS ──────────────────────────────────────────────
+        // ── Step b: LOSS MODULES (replaces stop_loss + unstuck) ───────────
         for (size_t s = 0; s < n; ++s) {
-            if (check_stop_loss(cfg, *current_candles[s], positions[s])) {
-                if (total_positions > 0) {
-                    total_positions -= 1;
+            if (positions[s].total_qty > 1e-12) {
+                double const rstd_l = need_stdev ? stdev_values[s] : 0.0;
+                ModuleContext lctx{cfg, symbols_info[s], *current_candles[s],
+                                  positions[s], balance, static_cast<int64_t>(i),
+                                  need_ema ? ema_values[s] : 0.0, rstd_l,
+                                  need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{},
+                                  i,
+                                  build_tf_data(s, current_candles[s]->timestamp, mtf_candles, need_mtf)};
+                for (auto const& lm : loss_modules) {
+                    auto loss_orders = lm->compute_loss_exits(lctx);
+                    for (auto const& co : loss_orders) {
+                        execute_close(positions[s], co, *current_candles[s], cfg);
+                    }
+                    if (std::abs(positions[s].total_qty) < 1e-12) break;
+                }
+                if (std::abs(positions[s].total_qty) < 1e-12) {
+                    positions[s].total_qty = 0.0;
+                    reset_position_state(positions[s]);
+                    if (total_positions > 0) total_positions -= 1;
                 }
             }
         }
@@ -270,7 +364,9 @@ BacktestResult run_backtest(const Config& cfg,
             ModuleContext ctx{cfg, symbols_info[s], *current_candles[s],
                               positions[s], balance, static_cast<int64_t>(i),
                               need_ema ? ema_values[s] : 0.0, rstd2,
-                              need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{}};
+                              need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{},
+                              i,
+                              build_tf_data(s, current_candles[s]->timestamp, mtf_candles, need_mtf)};
 
             // Check entry condition for BOTH first entry and double-down
             // (matches original behavior: EMA check was before the branch)
@@ -301,16 +397,7 @@ BacktestResult run_backtest(const Config& cfg,
             }
         }
 
-        // ── Step d: TIME-BASED UNSTUCK ─────────────────────────────────────
-        for (size_t s = 0; s < n; ++s) {
-            if (positions[s].total_qty > 1e-12) {
-                bool const closed = check_time_based_unstuck(cfg, *current_candles[s],
-                                                              positions[s], i);
-                if (closed && positions[s].total_qty < 1e-12 && total_positions > 0) {
-                    total_positions -= 1;
-                }
-            }
-        }
+        // (Step d: TIME-BASED UNSTUCK removed — now handled by loss modules in Step b)
 
         // ── Step e: enforce exposure limit (auto-reduce if > 1% over limit) ──
         {

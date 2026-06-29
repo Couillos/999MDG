@@ -52,6 +52,27 @@ struct StrategyParams {
     double revert_close_frac;
     double overshoot_pct;
     double tp_min_upnl_pct;
+
+    // --- zscore_ou + graduated_tp + loss modules params ---
+    double zscore_entry_threshold = 2.0;
+    int zscore_vwap_lookback = 96;
+    double tp1_z_threshold = 1.0;
+    double tp1_frac = 0.5;
+    double tp2_z_threshold = 0.3;
+    double tp2_frac = 0.8;
+    double trailing_atr_mult = 1.5;
+    double z_stop_threshold = 3.5;
+    int atr_period = 14;
+    double atr_stop_mult = 2.0;
+    double time_stop_hours = 4.0;
+    double atr_filter_mult = 1.5;
+    // loss_algo (multiple modules, OR logic)
+    std::vector<std::string> loss_algo_types;
+
+    // Map of param_name → timeframe for multi-timeframe indicators.
+    // e.g. {"atr_period": "1h", "entry_ema_period": "15m"}
+    // When a param uses ["1h", value] format in JSON, the timeframe is stored here.
+    std::map<std::string, std::string> indicator_timeframes;
 };
 
 /// Output redirection config.

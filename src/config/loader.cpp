@@ -67,26 +67,93 @@ double opt_f64(simdjson::ondemand::object obj, const char* name, double def) {
     return result;
 }
 
+/// Reads a param that may be either a scalar (e.g. 14) or an array ["1h", 14].
+/// If array, stores the timeframe in sp.indicator_timeframes[param_name] and returns the value.
+/// If scalar, returns the value as-is (timeframe defaults to base timeframe).
+double read_tf_param(simdjson::ondemand::object obj, const char* name, StrategyParams& sp) {
+    simdjson::ondemand::value val;
+    if (obj[name].get(val)) {
+        std::fprintf(stderr, "Config error: missing required param '%s'\n", name);
+        std::exit(1);
+    }
+    // Try array first
+    simdjson::ondemand::array arr;
+    if (!val.get_array().get(arr)) {
+        // It's an array: ["1h", value]
+        std::string_view tf;
+        double v = 0.0;
+        bool got_tf = false, got_v = false;
+        for (auto elem : arr) {
+            if (!got_tf) {
+                if (!elem.get_string().get(tf)) {
+                    sp.indicator_timeframes[name] = std::string(tf);
+                    got_tf = true;
+                }
+            } else if (!got_v) {
+                if (!elem.get_double().get(v)) got_v = true;
+                // Also try uint64 for integer params
+                uint64_t u;
+                if (!elem.get_uint64().get(u)) { v = static_cast<double>(u); got_v = true; }
+            }
+        }
+        return v;
+    }
+    // Scalar value
+    double v;
+    if (!val.get_double().get(v)) return v;
+    uint64_t u;
+    if (!val.get_uint64().get(u)) return static_cast<double>(u);
+    std::fprintf(stderr, "Config error: param '%s' must be a number or [timeframe, value] array\n", name);
+    std::exit(1);
+}
+
+/// Reads a param that may be scalar or ["tf", value], with a default.
+double read_tf_param_opt(simdjson::ondemand::object obj, const char* name, StrategyParams& sp, double def) {
+    simdjson::ondemand::value val;
+    if (obj[name].get(val)) return def;
+    simdjson::ondemand::array arr;
+    if (!val.get_array().get(arr)) {
+        std::string_view tf;
+        double v = def;
+        bool got_tf = false, got_v = false;
+        for (auto elem : arr) {
+            if (!got_tf) {
+                if (!elem.get_string().get(tf)) { sp.indicator_timeframes[name] = std::string(tf); got_tf = true; }
+            } else if (!got_v) {
+                if (!elem.get_double().get(v)) got_v = true;
+                uint64_t u;
+                if (!elem.get_uint64().get(u)) { v = static_cast<double>(u); got_v = true; }
+            }
+        }
+        return v;
+    }
+    double v;
+    if (!val.get_double().get(v)) return v;
+    uint64_t u;
+    if (!val.get_uint64().get(u)) return static_cast<double>(u);
+    return def;
+}
+
 /// Known methods for each module type.
 bool is_valid_entry_condition(const std::string& method) {
-    return method == "ema_dist_pct" || method == "bb_reversion";
+    return method == "ema_dist_pct" || method == "bb_reversion" || method == "zscore_ou";
 }
 bool is_valid_entries_algo(const std::string& method) {
     return method == "martingale" || method == "dca_linear";
 }
 bool is_valid_closes_algo(const std::string& method) {
-    return method == "simple_grid" || method == "mean_revert_tp";
+    return method == "simple_grid" || method == "mean_revert_tp" || method == "graduated_tp";
+}
+bool is_valid_loss_module(const std::string& method) {
+    return method == "legacy_stop_loss" || method == "legacy_unstuck" || method == "z_stop" || method == "atr_stop" || method == "time_stop";
 }
 
 /// Returns the set of parameter names that each module method uses.
 /// Used to validate that bounds only contain params for the selected modules.
 std::vector<std::string> params_for_entry_condition(const std::string& method) {
-    if (method == "ema_dist_pct") {
-        return {"entry_ema_period", "entry_ema_distance_pct"};
-    }
-    if (method == "bb_reversion") {
-        return {"entry_ema_period", "bb_std_mult", "bb_min_bandwidth_pct"};
-    }
+    if (method == "ema_dist_pct") return {"entry_ema_period", "entry_ema_distance_pct"};
+    if (method == "bb_reversion") return {"entry_ema_period", "bb_std_mult", "bb_min_bandwidth_pct"};
+    if (method == "zscore_ou") return {"zscore_entry_threshold", "zscore_vwap_lookback", "atr_period", "atr_filter_mult"};
     return {};
 }
 std::vector<std::string> params_for_entries_algo(const std::string& method) {
@@ -99,12 +166,9 @@ std::vector<std::string> params_for_entries_algo(const std::string& method) {
     return {};
 }
 std::vector<std::string> params_for_closes_algo(const std::string& method) {
-    if (method == "simple_grid") {
-        return {"close_grid_spacing_pct", "close_grid_count"};
-    }
-    if (method == "mean_revert_tp") {
-        return {"revert_close_frac", "overshoot_pct", "tp_min_upnl_pct"};
-    }
+    if (method == "simple_grid") return {"close_grid_spacing_pct", "close_grid_count"};
+    if (method == "mean_revert_tp") return {"revert_close_frac", "overshoot_pct", "tp_min_upnl_pct"};
+    if (method == "graduated_tp") return {"tp1_z_threshold", "tp1_frac", "tp2_z_threshold", "tp2_frac", "trailing_atr_mult", "zscore_vwap_lookback", "atr_period"};
     return {};
 }
 
@@ -124,6 +188,13 @@ std::vector<std::string> common_optimizable_params() {
 ///   - used by the selected entries_algo method, OR
 ///   - used by the selected closes_algo method, OR
 ///   - a common strategy param
+std::vector<std::string> params_for_loss_module(const std::string& method) {
+    if (method == "z_stop") return {"z_stop_threshold", "zscore_vwap_lookback"};
+    if (method == "atr_stop") return {"atr_period", "atr_stop_mult"};
+    if (method == "time_stop") return {"time_stop_hours"};
+    return {};
+}
+
 bool is_valid_bound_param(const std::string& param_name, const StrategyParams& sp) {
     // Check entry_condition params
     for (auto const& p : params_for_entry_condition(sp.entry_condition_type)) {
@@ -137,6 +208,12 @@ bool is_valid_bound_param(const std::string& param_name, const StrategyParams& s
     for (auto const& p : params_for_closes_algo(sp.closes_algo_type)) {
         if (p == param_name) return true;
     }
+    // Check loss module params
+    for (auto const& p : params_for_loss_module("")) {
+        (void)p;
+    }
+    // Also check individual loss params
+    if (param_name == "z_stop_threshold" || param_name == "atr_period" || param_name == "atr_stop_mult" || param_name == "time_stop_hours") return true;
     // Check common params
     for (auto const& p : common_optimizable_params()) {
         if (p == param_name) return true;
@@ -159,31 +236,31 @@ std::string parse_module(simdjson::ondemand::object parent, const char* module_n
                          bool (*validator)(const std::string&)) {
     simdjson::ondemand::object module_obj;
     if (parent[module_name].get_object().get(module_obj)) {
-        return "";  // module not present, use defaults
+        return "";
     }
-    // The module_obj has exactly one key = method name, value = params object
     for (auto field : module_obj) {
         std::string_view method_sv;
         if (field.unescaped_key().get(method_sv)) continue;
         std::string method(method_sv);
-
-        // Validate that the method is known for this module type
         if (!validator(method)) {
             std::fprintf(stderr, "Config error: unknown %s method '%s'\n", module_name, method.c_str());
             std::exit(1);
         }
-
         simdjson::ondemand::object params_obj;
         if (field.value().get_object().get(params_obj)) continue;
 
-        // Parse the params based on which method this is
         if (method == "ema_dist_pct") {
-            sp.entry_ema_period       = static_cast<int>(req_u64(params_obj, "entry_ema_period"));
+            sp.entry_ema_period       = static_cast<int>(read_tf_param(params_obj, "entry_ema_period", sp));
             sp.entry_ema_distance_pct = req_f64(params_obj, "entry_ema_distance_pct");
         } else if (method == "bb_reversion") {
-            sp.entry_ema_period     = static_cast<int>(req_u64(params_obj, "entry_ema_period"));
+            sp.entry_ema_period     = static_cast<int>(read_tf_param(params_obj, "entry_ema_period", sp));
             sp.bb_std_mult          = req_f64(params_obj, "bb_std_mult");
             sp.bb_min_bandwidth_pct = req_f64(params_obj, "bb_min_bandwidth_pct");
+        } else if (method == "zscore_ou") {
+            sp.zscore_entry_threshold = req_f64(params_obj, "zscore_entry_threshold");
+            sp.zscore_vwap_lookback   = static_cast<int>(read_tf_param(params_obj, "zscore_vwap_lookback", sp));
+            sp.atr_period             = static_cast<int>(read_tf_param(params_obj, "atr_period", sp));
+            sp.atr_filter_mult        = req_f64(params_obj, "atr_filter_mult");
         } else if (method == "martingale") {
             sp.entry_grid_spacing_pct = req_f64(params_obj, "entry_grid_spacing_pct");
             sp.double_down_factor     = req_f64(params_obj, "double_down_factor");
@@ -197,11 +274,16 @@ std::string parse_module(simdjson::ondemand::object parent, const char* module_n
             sp.revert_close_frac = req_f64(params_obj, "revert_close_frac");
             sp.overshoot_pct     = req_f64(params_obj, "overshoot_pct");
             sp.tp_min_upnl_pct   = req_f64(params_obj, "tp_min_upnl_pct");
+        } else if (method == "graduated_tp") {
+            sp.tp1_z_threshold   = req_f64(params_obj, "tp1_z_threshold");
+            sp.tp1_frac          = req_f64(params_obj, "tp1_frac");
+            sp.tp2_z_threshold   = req_f64(params_obj, "tp2_z_threshold");
+            sp.tp2_frac          = req_f64(params_obj, "tp2_frac");
+            sp.trailing_atr_mult = req_f64(params_obj, "trailing_atr_mult");
         }
         return method;
     }
-    // Module present but empty — error
-    std::fprintf(stderr, "Config error: %s block is empty (must specify exactly one method)\n", module_name);
+    std::fprintf(stderr, "Config error: %s block is empty\n", module_name);
     std::exit(1);
 }
 
@@ -231,6 +313,33 @@ StrategyParams parse_strategy(simdjson::ondemand::object strat) {
         std::exit(1);
     }
     sp.closes_algo_type = ca;
+
+    // Parse loss_algo (multiple methods, OR logic)
+    {
+        simdjson::ondemand::object loss_obj;
+        if (!strat["loss_algo"].get_object().get(loss_obj)) {
+            for (auto field : loss_obj) {
+                std::string_view method_sv;
+                if (field.unescaped_key().get(method_sv)) continue;
+                std::string method(method_sv);
+                if (!is_valid_loss_module(method)) {
+                    std::fprintf(stderr, "Config error: unknown loss_algo method '%s'\n", method.c_str());
+                    std::exit(1);
+                }
+                sp.loss_algo_types.push_back(method);
+                simdjson::ondemand::object params_obj;
+                if (field.value().get_object().get(params_obj)) continue;
+                if (method == "z_stop") {
+                    sp.z_stop_threshold = req_f64(params_obj, "z_stop_threshold");
+                } else if (method == "atr_stop") {
+                    sp.atr_period = static_cast<int>(read_tf_param(params_obj, "atr_period", sp));
+                    sp.atr_stop_mult = req_f64(params_obj, "atr_stop_mult");
+                } else if (method == "time_stop") {
+                    sp.time_stop_hours = req_f64(params_obj, "time_stop_hours");
+                }
+            }
+        }
+    }
 
     // Common (top-level) strategy params
     sp.initial_qty_pct          = req_f64(strat, "initial_qty_pct");
@@ -504,7 +613,10 @@ Config load_config(const std::string& path, Mode mode) {
         auto strat_obj = req_obj(root, "strategy");
         cfg.strategy = parse_strategy(strat_obj);
         // validate common strategy param ranges
-        if (cfg.strategy.entry_ema_period < 2) fatal("entry_ema_period must be >= 2");
+        // entry_ema_period: only validate if the selected module uses it
+        bool needs_ema_period = (cfg.strategy.entry_condition_type == "ema_dist_pct"
+                              || cfg.strategy.entry_condition_type == "bb_reversion");
+        if (needs_ema_period && cfg.strategy.entry_ema_period < 2) fatal("entry_ema_period must be >= 2");
         if (cfg.strategy.entry_grid_spacing_pct < 0.0) fatal("entry_grid_spacing_pct must be >= 0");
         if (cfg.strategy.initial_qty_pct < 0.0 || cfg.strategy.initial_qty_pct > 1.0) fatal("initial_qty_pct must be in [0, 1]");
         if (cfg.strategy.sl_upnl_pct > 0.0) fatal("sl_upnl_pct must be <= 0");
@@ -548,10 +660,11 @@ Config load_config(const std::string& path, Mode mode) {
         cfg.output = parse_output(out_obj);
     }
 
-    // computed
-    int const a = cfg.strategy.entry_ema_period;
-    int const b = cfg.strategy.parkinson_volatility_span;
-    cfg.warmup_candles = (a > b) ? a : b;
+// computed warmup: max of parkinson_span, entry_ema_period (if used), and zscore_vwap_lookback (if used)
+    int a = cfg.strategy.parkinson_volatility_span;
+    if ((cfg.strategy.entry_condition_type == "ema_dist_pct" || cfg.strategy.entry_condition_type == "bb_reversion") && cfg.strategy.entry_ema_period > a) a = cfg.strategy.entry_ema_period;
+    if (cfg.strategy.entry_condition_type == "zscore_ou" && cfg.strategy.zscore_vwap_lookback > a) a = cfg.strategy.zscore_vwap_lookback;
+    cfg.warmup_candles = a;
 
     return cfg;
 }

@@ -248,6 +248,31 @@ static void apply_params_to_cfg(Config& cfg, const std::map<std::string, double>
             cfg.strategy.overshoot_pct = v;
         else if (k == "tp_min_upnl_pct")
             cfg.strategy.tp_min_upnl_pct = v;
+        else if (k == "zscore_entry_threshold")
+            cfg.strategy.zscore_entry_threshold = v;
+        else if (k == "zscore_vwap_lookback")
+            cfg.strategy.zscore_vwap_lookback = static_cast<int>(v);
+        else if (k == "tp1_z_threshold")
+            cfg.strategy.tp1_z_threshold = v;
+        else if (k == "tp1_frac")
+            cfg.strategy.tp1_frac = v;
+        else if (k == "tp2_z_threshold")
+            cfg.strategy.tp2_z_threshold = v;
+        else if (k == "tp2_frac")
+            cfg.strategy.tp2_frac = v;
+        else if (k == "trailing_atr_mult")
+            cfg.strategy.trailing_atr_mult = v;
+        else if (k == "z_stop_threshold")
+            cfg.strategy.z_stop_threshold = v;
+        else if (k == "atr_period")
+            cfg.strategy.atr_period = static_cast<int>(v);
+        else if (k == "atr_stop_mult")
+            cfg.strategy.atr_stop_mult = v;
+        else if (k == "time_stop_hours")
+            cfg.strategy.time_stop_hours = v;
+        else if (k == "atr_filter_mult")
+            cfg.strategy.atr_filter_mult = v;
+            cfg.strategy.tp_min_upnl_pct = v;
             cfg.total_wallet_exposure = v;
     }
     // Don't recompute warmup_candles here — keep whatever was set by the caller.
