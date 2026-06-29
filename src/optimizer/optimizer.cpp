@@ -34,10 +34,10 @@ bool is_int_param(const std::string& name) {
 }
 
 std::vector<double> axis_values(const std::string& name,
-                                const std::array<double, 3>& bound) {
-    double const lo = bound[0];
-    double const hi = bound[1];
-    double const step = bound[2];
+                                const BoundSpec& bound) {
+    double const lo = bound.lo;
+    double const hi = bound.hi;
+    double const step = bound.step;
     if (std::abs(lo - hi) < 1e-15) {
         return {lo};
     }
@@ -67,9 +67,9 @@ std::vector<double> axis_values(const std::string& name,
             vals.reserve(static_cast<size_t>(n));
             for (int v = imin; v <= imax; ++v) vals.push_back(static_cast<double>(v));
         } else {
-            int const step = static_cast<int>(std::ceil(static_cast<double>(n) / max_vals));
-            vals.reserve(static_cast<size_t>(n / step + 1));
-            for (int v = imin; v <= imax; v += step) vals.push_back(static_cast<double>(v));
+            int const int_step = static_cast<int>(std::ceil(static_cast<double>(n) / max_vals));
+            vals.reserve(static_cast<size_t>(n / int_step + 1));
+            for (int v = imin; v <= imax; v += int_step) vals.push_back(static_cast<double>(v));
         }
         return vals;
     }
@@ -87,7 +87,7 @@ struct ParamAxis {
 };
 
 std::vector<ParamAxis> build_axes(
-    const std::map<std::string, std::array<double, 3>>& bounds) {
+    const std::map<std::string, BoundSpec>& bounds) {
     std::vector<ParamAxis> axes;
     axes.reserve(bounds.size());
     for (const auto& [name, bound] : bounds) {

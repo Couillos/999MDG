@@ -70,6 +70,7 @@ double opt_f64(simdjson::ondemand::object obj, const char* name, double def) {
 /// Reads a param that may be either a scalar (e.g. 14) or an array ["1h", 14].
 /// If array, stores the timeframe in sp.indicator_timeframes[param_name] and returns the value.
 /// If scalar, returns the value as-is (timeframe defaults to base timeframe).
+/// Fatals with a clear message if the param does not support timeframes but an array is given.
 double read_tf_param(simdjson::ondemand::object obj, const char* name, StrategyParams& sp) {
     simdjson::ondemand::value val;
     if (obj[name].get(val)) {
@@ -79,6 +80,11 @@ double read_tf_param(simdjson::ondemand::object obj, const char* name, StrategyP
     // Try array first
     simdjson::ondemand::array arr;
     if (!val.get_array().get(arr)) {
+        if (!supports_timeframe(name)) {
+            std::fprintf(stderr, "Config error: parameter '%s' does not support timeframes, "
+                "use a plain number instead of [\"tf\", value]\n", name);
+            std::exit(1);
+        }
         // It's an array: ["1h", value]
         std::string_view tf;
         double v = 0.0;
@@ -86,7 +92,13 @@ double read_tf_param(simdjson::ondemand::object obj, const char* name, StrategyP
         for (auto elem : arr) {
             if (!got_tf) {
                 if (!elem.get_string().get(tf)) {
-                    sp.indicator_timeframes[name] = std::string(tf);
+                    std::string tf_str(tf);
+                    if (timeframe_to_minutes(tf_str) <= 0) {
+                        std::fprintf(stderr, "Config error: invalid timeframe '%s' for param '%s'\n",
+                            tf_str.c_str(), name);
+                        std::exit(1);
+                    }
+                    sp.indicator_timeframes[name] = tf_str;
                     got_tf = true;
                 }
             } else if (!got_v) {
@@ -95,6 +107,14 @@ double read_tf_param(simdjson::ondemand::object obj, const char* name, StrategyP
                 uint64_t u;
                 if (!elem.get_uint64().get(u)) { v = static_cast<double>(u); got_v = true; }
             }
+        }
+        if (!got_tf) {
+            std::fprintf(stderr, "Config error: param '%s' array must start with a timeframe string, e.g. [\"1h\", value]\n", name);
+            std::exit(1);
+        }
+        if (!got_v) {
+            std::fprintf(stderr, "Config error: param '%s' array must contain a value after the timeframe, e.g. [\"1h\", value]\n", name);
+            std::exit(1);
         }
         return v;
     }
@@ -113,17 +133,39 @@ double read_tf_param_opt(simdjson::ondemand::object obj, const char* name, Strat
     if (obj[name].get(val)) return def;
     simdjson::ondemand::array arr;
     if (!val.get_array().get(arr)) {
+        if (!supports_timeframe(name)) {
+            std::fprintf(stderr, "Config error: parameter '%s' does not support timeframes, "
+                "use a plain number instead of [\"tf\", value]\n", name);
+            std::exit(1);
+        }
         std::string_view tf;
         double v = def;
         bool got_tf = false, got_v = false;
         for (auto elem : arr) {
             if (!got_tf) {
-                if (!elem.get_string().get(tf)) { sp.indicator_timeframes[name] = std::string(tf); got_tf = true; }
+                if (!elem.get_string().get(tf)) {
+                    std::string tf_str(tf);
+                    if (timeframe_to_minutes(tf_str) <= 0) {
+                        std::fprintf(stderr, "Config error: invalid timeframe '%s' for param '%s'\n",
+                            tf_str.c_str(), name);
+                        std::exit(1);
+                    }
+                    sp.indicator_timeframes[name] = tf_str;
+                    got_tf = true;
+                }
             } else if (!got_v) {
                 if (!elem.get_double().get(v)) got_v = true;
                 uint64_t u;
                 if (!elem.get_uint64().get(u)) { v = static_cast<double>(u); got_v = true; }
             }
+        }
+        if (!got_tf) {
+            std::fprintf(stderr, "Config error: param '%s' array must start with a timeframe string, e.g. [\"1h\", value]\n", name);
+            std::exit(1);
+        }
+        if (!got_v) {
+            std::fprintf(stderr, "Config error: param '%s' array must contain a value after the timeframe, e.g. [\"1h\", value]\n", name);
+            std::exit(1);
         }
         return v;
     }
@@ -345,7 +387,7 @@ StrategyParams parse_strategy(simdjson::ondemand::object strat) {
     sp.initial_qty_pct          = req_f64(strat, "initial_qty_pct");
     sp.sl_upnl_pct              = req_f64(strat, "sl_upnl_pct");
     sp.n_positions              = static_cast<int>(req_u64(strat, "n_positions"));
-    sp.parkinson_volatility_span = static_cast<int>(req_u64(strat, "parkinson_volatility_span"));
+    sp.parkinson_volatility_span = static_cast<int>(read_tf_param(strat, "parkinson_volatility_span", sp));
     sp.maker_fee_pct            = req_f64(strat, "maker_fee_pct");
     sp.time_based_unstuck_pct   = opt_f64(strat, "time_based_unstuck_pct", 0.0);
     sp.time_based_unstuck_age   = static_cast<int>(opt_f64(strat, "time_based_unstuck_age", 0.0));
@@ -355,7 +397,7 @@ StrategyParams parse_strategy(simdjson::ondemand::object strat) {
 /// Parses the optional optimize section.
 /// `sp` is the parsed strategy params — used to validate that each bound key
 /// corresponds to a parameter of the selected modules.
-OptimizeConfig parse_optimize(simdjson::ondemand::object opt, const StrategyParams& sp) {
+OptimizeConfig parse_optimize(simdjson::ondemand::object opt, StrategyParams& sp) {
     OptimizeConfig oc{};
 
     oc.n_workers = static_cast<int>(opt_f64(opt, "n_workers", 0.0));
@@ -438,19 +480,123 @@ OptimizeConfig parse_optimize(simdjson::ondemand::object opt, const StrategyPara
     //   }
     // Each module's method must match the one selected in strategy.
     // We flatten everything into oc.bounds (flat map) for the optimizer.
+    //
+    // Bound array formats:
+    //   [lo, hi, step]              — plain numeric (existing)
+    //   ["timeframe", lo, hi, step] — with timeframe prefix for mtf params
     simdjson::ondemand::object bounds_obj;
     if (!opt["bounds"].get_object().get(bounds_obj)) {
-        // Helper: parse a single [lo, hi, step] array
-        auto parse_bound_arr = [](simdjson::ondemand::array arr) -> std::array<double, 3> {
-            std::array<double, 3> bnd{};
-            bnd[2] = 0.0;
-            size_t idx = 0;
+        // Helper: parse a single bound array, supporting both plain and timeframe-prefixed formats.
+        // Returns a BoundSpec; if a timeframe prefix is found, validates the param supports it
+        // and returns the timeframe in spec.timeframe.
+        auto parse_bound_arr = [&](simdjson::ondemand::array arr,
+                                   const std::string& pname) -> BoundSpec {
+            BoundSpec bnd{};
+            bnd.step = 0.0;
+
+            // Single pass: detect timeframe prefix, collect numbers
+            std::string tf_str;
+            double vals[3] = {0.0, 0.0, 0.0};
+            size_t num_count = 0;
+            size_t elem_idx = 0;
+
             for (auto elem : arr) {
-                if (idx >= 3) break;
+                // Try string (timeframe prefix, must be first element)
+                std::string_view sv;
+                if (!elem.get_string().get(sv)) {
+                    if (elem_idx != 0) {
+                        std::fprintf(stderr, "Config error: bound '%s' has a string at position %zu, "
+                            "which is only allowed as the first element (timeframe)\n",
+                            pname.c_str(), elem_idx);
+                        std::exit(1);
+                    }
+                    if (!supports_timeframe(pname)) {
+                        std::fprintf(stderr, "Config error: bound '%s' does not support timeframes, "
+                            "use [lo, hi, step] without a string prefix\n", pname.c_str());
+                        std::exit(1);
+                    }
+                    tf_str = std::string(sv);
+                    if (timeframe_to_minutes(tf_str) <= 0) {
+                        std::fprintf(stderr, "Config error: invalid timeframe '%s' in bounds for '%s'\n",
+                            tf_str.c_str(), pname.c_str());
+                        std::exit(1);
+                    }
+                    ++elem_idx;
+                    continue;
+                }
+                // Try double
                 double v;
-                if (!elem.get_double().get(v)) bnd[idx] = v;
-                ++idx;
+                if (!elem.get_double().get(v)) {
+                    if (num_count >= 3) {
+                        std::fprintf(stderr, "Config error: bound '%s' has too many elements "
+                            "(max 3 numbers, or [\"tf\", lo, hi, step])\n", pname.c_str());
+                        std::exit(1);
+                    }
+                    vals[num_count++] = v;
+                    ++elem_idx;
+                    continue;
+                }
+                // Try uint64
+                uint64_t u;
+                if (!elem.get_uint64().get(u)) {
+                    if (num_count >= 3) {
+                        std::fprintf(stderr, "Config error: bound '%s' has too many elements\n",
+                            pname.c_str());
+                        std::exit(1);
+                    }
+                    vals[num_count++] = static_cast<double>(u);
+                    ++elem_idx;
+                    continue;
+                }
+                std::fprintf(stderr, "Config error: bound '%s' element %zu must be a string or number\n",
+                    pname.c_str(), elem_idx);
+                std::exit(1);
             }
+
+            bnd.timeframe = tf_str;
+
+            if (!tf_str.empty()) {
+                // Format: ["tf", lo, hi, step]  — need exactly 3 numbers
+                if (num_count != 3) {
+                    std::fprintf(stderr, "Config error: bound '%s' with timeframe needs 3 numbers "
+                        "(lo, hi, step), got %zu\n", pname.c_str(), num_count);
+                    std::exit(1);
+                }
+            } else {
+                // Format: [lo, hi] or [lo, hi, step] — 2 or 3 numbers
+                if (num_count < 2 || num_count > 3) {
+                    std::fprintf(stderr, "Config error: bound '%s' needs 2 or 3 numbers "
+                        "(lo, hi[, step]), got %zu\n", pname.c_str(), num_count);
+                    std::exit(1);
+                }
+                // Step defaults to 0.0 if not provided
+                if (num_count == 2) vals[2] = 0.0;
+            }
+
+            bnd.lo = vals[0];
+            bnd.hi = vals[1];
+            bnd.step = vals[2];
+
+            // Validation
+            if (bnd.lo > bnd.hi) {
+                std::fprintf(stderr, "Config error: bound '%s' lo (%.4f) > hi (%.4f)\n",
+                    pname.c_str(), bnd.lo, bnd.hi);
+                std::exit(1);
+            }
+            if (bnd.step < 0.0) {
+                std::fprintf(stderr, "Config error: bound '%s' step (%.4f) must be >= 0\n",
+                    pname.c_str(), bnd.step);
+                std::exit(1);
+            }
+
+            // Warning when step is omitted (0.0) for a non-trivial range
+            if (bnd.step == 0.0 && std::abs(bnd.lo - bnd.hi) > 1e-15) {
+                std::fprintf(stderr, "Warning: bound '%s' has range [%.4f, %.4f] without step.\n"
+                    "  Without a step, int params are auto-sampled (max 10 values) and\n"
+                    "  float params get 5 linear samples. Add a step for explicit control.\n",
+                    pname.c_str(), bnd.lo, bnd.hi);
+            }
+
             return bnd;
         };
 
@@ -504,7 +650,19 @@ OptimizeConfig parse_optimize(simdjson::ondemand::object opt, const StrategyPara
                                 full_key.c_str(), key_str.c_str(), method.c_str());
                             std::exit(1);
                         }
-                        oc.bounds[full_key] = parse_bound_arr(arr);
+                        BoundSpec spec = parse_bound_arr(arr, full_key);
+                        oc.bounds[full_key] = spec;
+                        // Inject bound timeframe into strategy config if present
+                        if (!spec.timeframe.empty()) {
+                            auto it = sp.indicator_timeframes.find(full_key);
+                            if (it != sp.indicator_timeframes.end() && it->second != spec.timeframe) {
+                                std::fprintf(stderr, "Config error: mismatch for '%s': strategy config uses "
+                                    "timeframe '%s' but bounds use '%s'\n",
+                                    full_key.c_str(), it->second.c_str(), spec.timeframe.c_str());
+                                std::exit(1);
+                            }
+                            sp.indicator_timeframes[full_key] = spec.timeframe;
+                        }
                     }
                 }
             } else {
@@ -520,7 +678,19 @@ OptimizeConfig parse_optimize(simdjson::ondemand::object opt, const StrategyPara
                         sp.entry_condition_type.c_str(), sp.entries_algo_type.c_str(), sp.closes_algo_type.c_str());
                     std::exit(1);
                 }
-                oc.bounds[key_str] = parse_bound_arr(arr);
+                BoundSpec spec = parse_bound_arr(arr, key_str);
+                oc.bounds[key_str] = spec;
+                // Inject bound timeframe into strategy config if present
+                if (!spec.timeframe.empty()) {
+                    auto it = sp.indicator_timeframes.find(key_str);
+                    if (it != sp.indicator_timeframes.end() && it->second != spec.timeframe) {
+                        std::fprintf(stderr, "Config error: mismatch for '%s': strategy config uses "
+                            "timeframe '%s' but bounds use '%s'\n",
+                            key_str.c_str(), it->second.c_str(), spec.timeframe.c_str());
+                        std::exit(1);
+                    }
+                    sp.indicator_timeframes[key_str] = spec.timeframe;
+                }
             }
         }
     }
@@ -667,6 +837,48 @@ Config load_config(const std::string& path, Mode mode) {
     cfg.warmup_candles = a;
 
     return cfg;
+}
+
+// ===========================================================================
+// Timeframe helpers
+// ===========================================================================
+
+int timeframe_to_minutes(const std::string& tf) {
+    if (tf.empty()) return 0;
+    char unit = tf.back();
+    int mult;
+    switch (unit) {
+        case 'm': mult = 1; break;
+        case 'h': mult = 60; break;
+        case 'd': mult = 1440; break;
+        case 'w': mult = 10080; break;
+        default: return 0;
+    }
+    int num = 0;
+    for (size_t i = 0; i + 1 < tf.size(); ++i) {
+        if (tf[i] < '0' || tf[i] > '9') return 0;
+        num = num * 10 + (tf[i] - '0');
+    }
+    return num * mult;
+}
+
+int64_t timeframe_to_ms(const std::string& tf) {
+    return static_cast<int64_t>(timeframe_to_minutes(tf)) * 60000;
+}
+
+double candle_ratio(const std::string& tf, const std::string& base) {
+    int a = timeframe_to_minutes(tf);
+    int b = timeframe_to_minutes(base);
+    if (a <= 0 || b <= 0) return 1.0;
+    return static_cast<double>(a) / static_cast<double>(b);
+}
+
+/// Returns the set of parameter names that support a timeframe prefix.
+bool supports_timeframe(const std::string& name) {
+    return name == "entry_ema_period"
+        || name == "atr_period"
+        || name == "zscore_vwap_lookback"
+        || name == "parkinson_volatility_span";
 }
 
 }  // namespace powermdg

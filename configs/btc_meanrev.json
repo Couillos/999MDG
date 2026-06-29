@@ -41,7 +41,7 @@
     "maker_fee_pct": 0.001
   },
   "optimize": {
-    "n_workers": 8,
+    "n_workers": 10,
     "max_iterations": 100000,
     "limits": {
       "drawdown_worst": {"max": 0.5},
@@ -54,8 +54,8 @@
 	{"metric": "mdg_usd", "goal": "max", "weight": 1.0}
     ],
     "ga": {
-      "population_size": 100,
-      "n_generations": 10,
+      "population_size": 500,
+      "n_generations": 50,
       "crossover_prob": 0.8,
       "crossover_eta": 15.0,
       "mutation_prob": 0.2,
@@ -66,7 +66,8 @@
       "entry_condition": {
         "zscore_ou": {
           "zscore_entry_threshold": [1.5, 3.0, 0.1],
-          "zscore_vwap_lookback": ["15m", 48, 192, 24]
+          "zscore_vwap_lookback": ["15m", 48, 192, 24],
+          "atr_filter_mult": [1.0, 3.0, 0.1]
         }
       },
       "entries_algo": {
@@ -78,14 +79,25 @@
       "closes_algo": {
         "graduated_tp": {
           "tp1_z_threshold": [0.5, 1.5, 0.1],
-          "tp1_frac": [0.3, 0.7, 0.1]
+          "tp1_frac": [0.3, 0.7, 0.1],
+          "tp2_z_threshold": [0.1, 1.5, 0.1],
+          "tp2_frac": [0.3, 1.0, 0.1],
+          "trailing_atr_mult": [1.0, 3.0, 0.1]
         }
       },
       "loss_algo": {
         "z_stop": { "z_stop_threshold": [3.0, 5.0, 0.5] },
+        "atr_stop": {
+          "atr_period": ["1h", 5, 30, 1],
+          "atr_stop_mult": [1.0, 4.0, 0.5]
+        },
         "time_stop": { "time_stop_hours": [2.0, 8.0, 1.0] }
       },
-      "initial_qty_pct": [0.005, 0.02, 0.005]
+      "initial_qty_pct": [0.005, 0.02, 0.005],
+      "sl_upnl_pct": [-0.15, -0.01, 0.01],
+      "n_positions": [1, 5, 1],
+      "parkinson_volatility_span": [5, 30, 1],
+      "maker_fee_pct": [0.0, 0.005, 0.0005]
     }
   },
   "output": {"dir": "results"}

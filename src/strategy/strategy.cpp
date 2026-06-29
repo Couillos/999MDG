@@ -280,10 +280,37 @@ BacktestResult run_backtest(const Config& cfg,
             continue;
         }
 
-        // Compute Parkinson volatility for each symbol
-        for (size_t s = 0; s < n; ++s) {
-            parkinson_vol[s] = compute_parkinson_volatility(
-                per_symbol_candles[s].candles, i, cfg.strategy.parkinson_volatility_span);
+        // Compute Parkinson volatility for each symbol (with optional MTF)
+        auto pv_tf_it = cfg.strategy.indicator_timeframes.find("parkinson_volatility_span");
+        if (pv_tf_it != cfg.strategy.indicator_timeframes.end() && need_mtf) {
+            auto const& tf_name = pv_tf_it->second;
+            auto mtf_it = mtf_candles.find(tf_name);
+            if (mtf_it != mtf_candles.end()) {
+                for (size_t s = 0; s < n; ++s) {
+                    auto const& mtf_arr = mtf_it->second[s].candles;
+                    if (mtf_arr.empty()) {
+                        parkinson_vol[s] = 0.0;
+                        continue;
+                    }
+                    int64_t cur_ts = current_candles[s]->timestamp;
+                    // Find the last MTF candle whose timestamp <= cur_ts
+                    size_t mtf_idx = 0;
+                    for (size_t j = 0; j + 1 < mtf_arr.size(); ++j) {
+                        if (mtf_arr[j + 1].timestamp <= cur_ts) mtf_idx = j + 1;
+                        else break;
+                    }
+                    parkinson_vol[s] = compute_parkinson_volatility(
+                        mtf_arr, mtf_idx, cfg.strategy.parkinson_volatility_span);
+                }
+            } else {
+                for (size_t s = 0; s < n; ++s)
+                    parkinson_vol[s] = compute_parkinson_volatility(
+                        per_symbol_candles[s].candles, i, cfg.strategy.parkinson_volatility_span);
+            }
+        } else {
+            for (size_t s = 0; s < n; ++s)
+                parkinson_vol[s] = compute_parkinson_volatility(
+                    per_symbol_candles[s].candles, i, cfg.strategy.parkinson_volatility_span);
         }
 
         // Sort symbols by volatility descending; stable for deterministic order

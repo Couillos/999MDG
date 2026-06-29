@@ -477,7 +477,11 @@ static void run_optimize(Config const& cfg_in, bool backtest_best) {
     int max_warmup = cfg.warmup_candles;
     for (const auto& [name, bound] : cfg.optimize.bounds) {
         if (name == "entry_ema_period" || name == "parkinson_volatility_span") {
-            int const bval = static_cast<int>(bound[1]);
+            int bval = static_cast<int>(bound.hi);
+            if (!bound.timeframe.empty()) {
+                double ratio = candle_ratio(bound.timeframe, cfg.timeframe);
+                bval = static_cast<int>(std::ceil(static_cast<double>(bval) * ratio));
+            }
             if (bval > max_warmup) max_warmup = bval;
         }
     }

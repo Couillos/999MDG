@@ -45,7 +45,7 @@
     "bounds": {
       "entry_condition": {
         "ema_dist_pct": {
-          "entry_ema_period": [12, 48]
+          "entry_ema_period": [12, 48, 1]
         }
       },
       "initial_qty_pct": [0.02, 0.1]

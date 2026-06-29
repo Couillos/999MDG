@@ -1,4 +1,5 @@
 #include "atr_stop.h"
+#include <algorithm>
 #include <cmath>
 namespace powermdg {
 namespace {

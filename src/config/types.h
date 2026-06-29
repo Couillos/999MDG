@@ -108,13 +108,22 @@ struct GAParams {
     double mutation_indpb = 0.1;
 };
 
+/// A single bound entry: [timeframe?] [lo, hi, step].
+/// When `timeframe` is non-empty, the parameter uses that timeframe.
+struct BoundSpec {
+    std::string timeframe;
+    double lo = 0.0;
+    double hi = 0.0;
+    double step = 0.0;
+};
+
 /// Configuration for the optimizer (only used in OPTIMIZE mode).
 struct OptimizeConfig {
     int n_workers;
     size_t max_iterations;
     std::map<std::string, Limit> limits;
     std::vector<ScoringMetric> scoring;
-    std::map<std::string, std::array<double, 3>> bounds;
+    std::map<std::string, BoundSpec> bounds;
     GAParams ga;
 };
 
