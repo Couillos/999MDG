@@ -1,40 +1,52 @@
 #include "graduated_tp.h"
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <thread>
 namespace powermdg {
 namespace {
-double compute_vwap(std::span<const Candle> cs, size_t end, size_t lb) {
-    double pv=0,vv=0;
-    size_t st=(end>lb)?end-lb:0;
-    for (size_t i=st;i<=end&&i<cs.size();++i){double tp=(cs[i].high+cs[i].low+cs[i].close)/3.0;pv+=tp*cs[i].volume;vv+=cs[i].volume;}
-    return vv>0?pv/vv:0.0;
+
+// ── DEBUG counters ──
+static std::atomic<size_t> debug_gtp_entry_calls{0};
+static std::atomic<size_t> debug_gtp_atr_calls{0};
+static std::atomic<double> debug_gtp_atr_time_ms{0};
+
+static void log_gtp_stats() {
+    static thread_local auto last_log = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration<double>(now - last_log).count() < 5.0) return;
+    last_log = now;
+    std::fprintf(stderr,
+        "[DEBUG] [graduated_tp] entry=%zu atr=%zu | atr_time=%.0fms\n",
+        debug_gtp_entry_calls.load(), debug_gtp_atr_calls.load(),
+        debug_gtp_atr_time_ms.load());
 }
-double compute_stdev(std::span<const Candle> cs, size_t end, size_t lb) {
-    if(end<2) return 0.0;
-    size_t st=(end>lb)?end-lb:0;
-    size_t n=0;double s=0,sq=0;
-    for(size_t i=st;i<=end&&i<cs.size();++i){s+=cs[i].close;sq+=cs[i].close*cs[i].close;++n;}
-    if(n<2) return 0.0;
-    double m=s/n;return std::sqrt(std::max(0.0,sq/n-m*m));
-}
+
 double compute_atr(std::span<const Candle> cs, size_t end, int period) {
+    debug_gtp_atr_calls.fetch_add(1);
+    auto t0 = std::chrono::steady_clock::now();
     if(cs.empty()||end<1) return 0.0;
     size_t st=(end>static_cast<size_t>(period))?end-period:0;
     double sum=0;size_t n=0;
     for(size_t i=st;i<=end&&i<cs.size();++i){if(i==0)continue;
         double tr=std::max({cs[i].high-cs[i].low,std::abs(cs[i].high-cs[i-1].close),std::abs(cs[i].low-cs[i-1].close)});
         sum+=tr;++n;}
+    auto t1 = std::chrono::steady_clock::now();
+    debug_gtp_atr_time_ms.fetch_add(std::chrono::duration<double, std::milli>(t1 - t0).count());
     return n>0?sum/n:0.0;
 }
 } // anonymous namespace
 
 std::vector<CloseOrder> GraduatedTpClosesAlgo::compute_closes(const ModuleContext& ctx) const {
+    debug_gtp_entry_calls.fetch_add(1);
+    log_gtp_stats();
     std::vector<CloseOrder> orders;
     if (std::abs(ctx.pos.total_qty) < 1e-12) return orders;
     if (ctx.candle_series.empty()) return orders;
-    int const lb = ctx.cfg.strategy.zscore_vwap_lookback;
-    double const vwap = compute_vwap(ctx.candle_series, ctx.candle_series_idx, static_cast<size_t>(lb));
-    double const stdev = compute_stdev(ctx.candle_series, ctx.candle_series_idx, static_cast<size_t>(lb));
+    double const vwap = ctx.vwap;
+    double const stdev = ctx.stdev;
     if (vwap<=0.0 || stdev<=0.0) return orders;
     double const z = std::abs((ctx.candle.close - vwap) / stdev);
     double remaining = ctx.pos.total_qty;

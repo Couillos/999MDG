@@ -5,6 +5,7 @@
 #include "utils/thread_pool.h"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -14,6 +15,7 @@
 #include <mutex>
 #include <random>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 #include <zstd.h>
@@ -834,6 +836,25 @@ OptimizerResult run_optimization(
     std::printf("  NSGA-II: pop=%d, gen=%d, params=%zu, objectives=%zu\n",
                 pop_size, n_gen, n_params, scoring.size());
 
+    // ── DEBUG: data sharing verification ──
+    std::fprintf(stderr, "[DEBUG] per_symbol_candles ptr=%p size=%zu\n",
+                 (void*)&per_symbol_candles, per_symbol_candles.size());
+    std::fprintf(stderr, "[DEBUG] symbols_info ptr=%p size=%zu\n",
+                 (void*)&symbols_info, symbols_info.size());
+    for (auto const& [tf, vlc] : mtf_candles) {
+        std::fprintf(stderr, "[DEBUG] mtf_candles[%s] ptr=%p size=%zu\n",
+                     tf.c_str(), (void*)&vlc, vlc.size());
+        for (size_t si = 0; si < vlc.size(); ++si) {
+            std::fprintf(stderr, "[DEBUG]   mtf[%s][%zu] candles ptr=%p size=%zu\n",
+                         tf.c_str(), si, (void*)&vlc[si].candles, vlc[si].candles.size());
+        }
+    }
+    for (size_t si = 0; si < per_symbol_candles.size(); ++si) {
+        std::fprintf(stderr, "[DEBUG] per_symbol_candles[%zu] candles ptr=%p size=%zu\n",
+                     si, (void*)&per_symbol_candles[si].candles,
+                     per_symbol_candles[si].candles.size());
+    }
+
     // 2. Random initial population
     std::mt19937_64 rng(std::random_device{}());
     auto gene_pop = random_population(static_cast<size_t>(pop_size), lo, hi, rng);
@@ -855,22 +876,52 @@ OptimizerResult run_optimization(
     ThreadPool pool(cfg.optimize.n_workers > 0 ? cfg.optimize.n_workers : 1);
 
     // 5. Evaluate initial population in parallel
+    {
+        std::fprintf(stderr, "[DEBUG] Evaluating initial pop of %d individuals with %d workers...\n",
+                     pop_size, pool.worker_count());
+    }
     std::vector<Individual> population(static_cast<size_t>(pop_size));
     {
         std::atomic<size_t> eval_idx{0};
+        std::atomic<size_t> eval_count{0};
+        auto eval_start = std::chrono::steady_clock::now();
         int const nw = pool.worker_count();
         for (int w = 0; w < nw; ++w) {
             pool.submit([&]() {
+                std::thread::id const tid = std::this_thread::get_id();
                 while (true) {
                     size_t const idx = eval_idx.fetch_add(1, std::memory_order_relaxed);
                     if (idx >= population.size()) break;
+
+                    // Log first few evaluations with data ptrs
+                    size_t const cnt = eval_count.fetch_add(1, std::memory_order_relaxed);
+                    if (cnt < 5) {
+                        std::fprintf(stderr, "[DEBUG] eval idx=%zu thread=%zx", idx, std::hash<std::thread::id>{}(tid));
+                        std::fprintf(stderr, " cfg=0x%zx", std::hash<const void*>{}(&base_cfg));
+                        std::fprintf(stderr, " candles=%p", (void*)&per_symbol_candles[0].candles);
+                        std::fprintf(stderr, " mtf_candles=%p\n", (void*)mtf_candles.empty() ? nullptr : (void*)&mtf_candles.begin()->second[0].candles);
+                    }
+
+                    auto t0 = std::chrono::steady_clock::now();
                     population[idx] = evaluate_individual(
                         base_cfg, per_symbol_candles, symbols_info, axes, limits,
                         gene_pop[idx], 0, &mtf_candles);
+                    auto t1 = std::chrono::steady_clock::now();
+                    double const ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+                    // Log timing for first few + periodic
+                    if (cnt < 5 || cnt % 10 == 0 || ms > 500) {
+                        std::fprintf(stderr, "[DEBUG] eval idx=%zu thread=%zx done in %.0f ms (cnt=%zu)\n",
+                                     idx, std::hash<std::thread::id>{}(tid), ms, cnt);
+                    }
                 }
             });
         }
         pool.wait();
+        auto eval_end = std::chrono::steady_clock::now();
+        double const total_sec = std::chrono::duration<double>(eval_end - eval_start).count();
+        std::fprintf(stderr, "[DEBUG] Initial pop evaluated: %zu individuals in %.1f s (avg %.0f ms/eval)\n",
+                     population.size(), total_sec, total_sec * 1000.0 / population.size());
     }
 
     // 6. Compute objectives + environmental selection for initial pop
@@ -887,45 +938,72 @@ OptimizerResult run_optimization(
 
     // 7. Generations loop
     for (int gen = 1; gen <= n_gen; ++gen) {
+        auto gen_start = std::chrono::steady_clock::now();
+        std::fprintf(stderr, "[DEBUG] === Generation %d/%d starting ===\n", gen, n_gen);
+
         size_t const off_size = static_cast<size_t>(pop_size);
         std::vector<Individual> offspring(off_size);
 
         // Create offspring (sequential, uses main RNG)
-        for (size_t i = 0; i + 1 < off_size; i += 2) {
-            size_t p1_idx = tournament_select(population, 2, rng);
-            size_t p2_idx = tournament_select(population, 2, rng);
+        {
+            auto t0 = std::chrono::steady_clock::now();
+            for (size_t i = 0; i + 1 < off_size; i += 2) {
+                size_t p1_idx = tournament_select(population, 2, rng);
+                size_t p2_idx = tournament_select(population, 2, rng);
 
-            std::vector<double> c1 = population[p1_idx].genes;
-            std::vector<double> c2 = population[p2_idx].genes;
+                std::vector<double> c1 = population[p1_idx].genes;
+                std::vector<double> c2 = population[p2_idx].genes;
 
-            sbx_crossover(c1, c2, lo, hi, ga.crossover_prob, ga.crossover_eta, rng);
-            polynomial_mutation(c1, lo, hi, ga.mutation_prob, ga.mutation_indpb, ga.mutation_eta, rng);
-            polynomial_mutation(c2, lo, hi, ga.mutation_prob, ga.mutation_indpb, ga.mutation_eta, rng);
+                sbx_crossover(c1, c2, lo, hi, ga.crossover_prob, ga.crossover_eta, rng);
+                polynomial_mutation(c1, lo, hi, ga.mutation_prob, ga.mutation_indpb, ga.mutation_eta, rng);
+                polynomial_mutation(c2, lo, hi, ga.mutation_prob, ga.mutation_indpb, ga.mutation_eta, rng);
 
-            deduplicate_genes(c1, seen_hashes, lo, hi, rng);
-            deduplicate_genes(c2, seen_hashes, lo, hi, rng);
-            offspring[i].genes = std::move(c1);
-            offspring[i].generation = gen;
-            offspring[i + 1].genes = std::move(c2);
-            offspring[i + 1].generation = gen;
+                deduplicate_genes(c1, seen_hashes, lo, hi, rng);
+                deduplicate_genes(c2, seen_hashes, lo, hi, rng);
+                offspring[i].genes = std::move(c1);
+                offspring[i].generation = gen;
+                offspring[i + 1].genes = std::move(c2);
+                offspring[i + 1].generation = gen;
+            }
+            auto t1 = std::chrono::steady_clock::now();
+            std::fprintf(stderr, "[DEBUG]   Offspring creation: %.1f ms\n",
+                         std::chrono::duration<double, std::milli>(t1 - t0).count());
         }
 
         // Evaluate offspring in parallel
         {
+            std::fprintf(stderr, "[DEBUG]   Evaluating %zu offspring with %d workers...\n",
+                         off_size, pool.worker_count());
             std::atomic<size_t> eval_idx{0};
+            auto eval_start = std::chrono::steady_clock::now();
             int const nw = pool.worker_count();
             for (int w = 0; w < nw; ++w) {
                 pool.submit([&]() {
+                    std::thread::id const tid = std::this_thread::get_id();
+                    size_t local_cnt = 0;
                     while (true) {
                         size_t const idx = eval_idx.fetch_add(1, std::memory_order_relaxed);
                         if (idx >= off_size) break;
+
+                        auto t0 = std::chrono::steady_clock::now();
                         offspring[idx] = evaluate_individual(
                             base_cfg, per_symbol_candles, symbols_info, axes, limits,
                             offspring[idx].genes, gen, &mtf_candles);
+                        auto t1 = std::chrono::steady_clock::now();
+                        double const ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+                        if (++local_cnt == 1 || ms > 1000) {
+                            std::fprintf(stderr, "[DEBUG]     eval gen=%d idx=%zu thread=%zx done in %.0f ms\n",
+                                         gen, idx, std::hash<std::thread::id>{}(tid), ms);
+                        }
                     }
                 });
             }
             pool.wait();
+            auto eval_end = std::chrono::steady_clock::now();
+            double const eval_sec = std::chrono::duration<double>(eval_end - eval_start).count();
+            std::fprintf(stderr, "[DEBUG]   Offspring evaluated: %zu in %.1f s (avg %.0f ms/eval)\n",
+                         off_size, eval_sec, eval_sec * 1000.0 / off_size);
         }
 
         // Combined = parents + offspring
@@ -971,6 +1049,11 @@ OptimizerResult run_optimization(
                              static_cast<size_t>(n_gen),
                              sorted, scoring, limits, axes);
         }
+
+        auto gen_end = std::chrono::steady_clock::now();
+        double const gen_sec = std::chrono::duration<double>(gen_end - gen_start).count();
+        std::fprintf(stderr, "[DEBUG] === Generation %d/%d done in %.1f s ===\n",
+                     gen, n_gen, gen_sec);
     }
 
     // 8. Close temp file

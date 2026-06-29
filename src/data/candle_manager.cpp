@@ -2,12 +2,15 @@
 #include "binance_client.h"
 #include "cache.h"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <iterator>
 #include <map>
+#include <thread>
 #include <zstd.h>
 
 namespace powermdg {
@@ -259,6 +262,19 @@ void build_index(const std::string& tf, const std::vector<std::string>& symbols)
 // ── Public API ────────────────────────────────────────────────────────────
 
 LoadedCandles load_candles(const Config& cfg) {
+    // ── DEBUG: verify single loading ──
+    static std::atomic<int> load_count{0};
+    int n = ++load_count;
+    auto load_start = std::chrono::steady_clock::now();
+    std::fprintf(stderr, "[DEBUG] [candle_manager] load_candles() CALL #%d: timeframe=%s symbols=[",
+                 n, cfg.timeframe.c_str());
+    for (size_t si = 0; si < cfg.symbols.size(); ++si) {
+        if (si > 0) std::fprintf(stderr, ",");
+        std::fprintf(stderr, "%s", cfg.symbols[si].c_str());
+    }
+    std::fprintf(stderr, "] date_from=%s date_to=%s warmup=%d\n",
+                 cfg.date_from.c_str(), cfg.date_to.c_str(), cfg.warmup_candles);
+
     // 1. Parse dates & timeframe
     auto const date_from_ms = parse_date_ms(cfg.date_from);
     auto const date_to_ms   = parse_date_ms(cfg.date_to);
@@ -365,6 +381,11 @@ LoadedCandles load_candles(const Config& cfg) {
     // trading_start_idx = first warmup_candles of first symbol
     auto const trading_start = static_cast<size_t>(cfg.warmup_candles);
     write_cache(hash, all_candles, trading_start);
+
+    auto load_end = std::chrono::steady_clock::now();
+    double load_sec = std::chrono::duration<double>(load_end - load_start).count();
+    std::fprintf(stderr, "[DEBUG] [candle_manager] load_candles() #%d DONE: %zu candles in %.1f s\n",
+                 n, all_candles.size(), load_sec);
 
     return {std::move(all_candles), trading_start};
 }

@@ -478,6 +478,9 @@ static void run_optimize(Config const& cfg_in, bool backtest_best) {
         std::string("data/cache"));
     std::printf("  Loaded %zu symbols\n", symbols_info.size());
 
+    std::fprintf(stderr, "[DEBUG] [main] symbols_info ptr=%p size=%zu\n",
+                 (void*)&symbols_info, symbols_info.size());
+
     int max_warmup = cfg.warmup_candles;
     // DEFECT A fix: scan all four warmup-relevant params (not just the two that
     // were listed before).  The optimizer's run_optimization() uses the same set
@@ -515,8 +518,16 @@ static void run_optimize(Config const& cfg_in, bool backtest_best) {
     std::printf("  Total candles: %zu, per symbol: %zu, trading start: %zu\n",
                 loaded.candles.size(), loaded.candles.size() / n_sym,
                 loaded.trading_start_idx);
+    std::fprintf(stderr, "[DEBUG] [main] per_symbol[0] candles ptr=%p size=%zu\n",
+                 (void*)&per_symbol[0].candles, per_symbol[0].candles.size());
 
     auto const mtf_data = load_all_mtf_candles(cfg);
+    for (auto const& [tf, vlc] : mtf_data) {
+        for (size_t si = 0; si < vlc.size(); ++si) {
+            std::fprintf(stderr, "[DEBUG] [main] mtf[%s][%zu] candles ptr=%p size=%zu\n",
+                         tf.c_str(), si, (void*)&vlc[si].candles, vlc[si].candles.size());
+        }
+    }
 
     std::printf("Running optimization...\n");
 

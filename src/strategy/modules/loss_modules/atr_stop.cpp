@@ -1,10 +1,33 @@
 #include "atr_stop.h"
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <thread>
 namespace powermdg {
 namespace {
+
+// ── DEBUG counters ──
+static std::atomic<size_t> debug_atr_stop_calls{0};
+static std::atomic<size_t> debug_atr_stop_atr_calls{0};
+static std::atomic<double> debug_atr_stop_atr_time_ms{0};
+
+static void log_atr_stop_stats() {
+    static thread_local auto last_log = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration<double>(now - last_log).count() < 5.0) return;
+    last_log = now;
+    std::fprintf(stderr,
+        "[DEBUG] [atr_stop] entry=%zu atr_calls=%zu atr_time=%.0fms\n",
+        debug_atr_stop_calls.load(), debug_atr_stop_atr_calls.load(),
+        debug_atr_stop_atr_time_ms.load());
+}
+
 /// Compute ATR(14) from HTF candles.
 double compute_atr(std::span<const Candle> candles, size_t end_idx, int period) {
+    debug_atr_stop_atr_calls.fetch_add(1);
+    auto t0 = std::chrono::steady_clock::now();
     if (candles.empty() || end_idx < 1) return 0.0;
     size_t start = (end_idx > static_cast<size_t>(period)) ? end_idx - period : 0;
     double sum_tr = 0.0;
@@ -19,11 +42,15 @@ double compute_atr(std::span<const Candle> candles, size_t end_idx, int period) 
         sum_tr += tr;
         ++n;
     }
+    auto t1 = std::chrono::steady_clock::now();
+    debug_atr_stop_atr_time_ms.fetch_add(std::chrono::duration<double, std::milli>(t1 - t0).count());
     return n > 0 ? sum_tr / n : 0.0;
 }
 } // anonymous namespace
 
 std::vector<CloseOrder> AtrStop::compute_loss_exits(const ModuleContext& ctx) const {
+    debug_atr_stop_calls.fetch_add(1);
+    log_atr_stop_stats();
     std::vector<CloseOrder> orders;
     if (std::abs(ctx.pos.total_qty) < 1e-12) return orders;
     if (ctx.pos.avg_entry_price <= 0.0) return orders;

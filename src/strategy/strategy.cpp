@@ -7,15 +7,45 @@
 #include "data/candle_manager.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <filesystem>
 #include <numeric>
 #include <string>
+#include <thread>
 #include <vector>
 #include <set>
 #include <map>
+
+// ── DEBUG: strategy-level counters ──
+static std::atomic<size_t> debug_strat_candle_count{0};
+static std::atomic<size_t> debug_strat_position_candle_count{0};
+static std::atomic<size_t> debug_strat_entry_condition_calls{0};
+static std::atomic<size_t> debug_strat_entry_calls{0};
+static std::atomic<size_t> debug_strat_close_calls{0};
+static std::atomic<size_t> debug_strat_loss_calls{0};
+static std::atomic<double> debug_strat_close_time_ms{0};
+static std::atomic<double> debug_strat_loss_time_ms{0};
+static std::atomic<double> debug_strat_entry_time_ms{0};
+static std::atomic<double> debug_strat_pv_time_ms{0};
+
+static void log_strat_stats() {
+    static thread_local auto last_log = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration<double>(now - last_log).count() < 5.0) return;
+    last_log = now;
+    std::fprintf(stderr,
+        "[DEBUG] [strategy] candles=%zu pos_candles=%zu entry_cond=%zu closes=%zu(calls=%zu time=%.0fms) loss=%zu(calls=%zu time=%.0fms) entries=%zu(calls=%zu time=%.0fms) pv_time=%.0fms\n",
+        debug_strat_candle_count.load(), debug_strat_position_candle_count.load(),
+        debug_strat_entry_condition_calls.load(),
+        debug_strat_close_calls.load(), debug_strat_close_calls.load(), debug_strat_close_time_ms.load(),
+        debug_strat_loss_calls.load(), debug_strat_loss_calls.load(), debug_strat_loss_time_ms.load(),
+        debug_strat_entry_calls.load(), debug_strat_entry_calls.load(), debug_strat_entry_time_ms.load(),
+        debug_strat_pv_time_ms.load());
+}
 
 namespace powermdg {
 namespace {
@@ -23,6 +53,35 @@ namespace {
 /// Computes the next EMA value iteratively.
 double next_ema(double alpha, double close, double prev_ema) {
     return alpha * close + (1.0 - alpha) * prev_ema;
+}
+
+/// VWAP over last N candles (lookback window).
+double compute_vwap(std::span<const Candle> cs, size_t end, size_t lb) {
+    double pv = 0.0, vv = 0.0;
+    size_t st = (end > lb) ? end - lb : 0;
+    for (size_t i = st; i <= end && i < cs.size(); ++i) {
+        double tp = (cs[i].high + cs[i].low + cs[i].close) / 3.0;
+        pv += tp * cs[i].volume;
+        vv += cs[i].volume;
+    }
+    return vv > 0.0 ? pv / vv : 0.0;
+}
+
+/// Population stdev of close over last N candles.
+double compute_stdev(std::span<const Candle> cs, size_t end, size_t lb) {
+    if (end < 2) return 0.0;
+    size_t st = (end > lb) ? end - lb : 0;
+    size_t n = 0;
+    double s = 0.0, sq = 0.0;
+    for (size_t i = st; i <= end && i < cs.size(); ++i) {
+        s += cs[i].close;
+        sq += cs[i].close * cs[i].close;
+        ++n;
+    }
+    if (n < 2) return 0.0;
+    double m = s / n;
+    double v = sq / n - m * m;
+    return std::sqrt(std::max(0.0, v));
 }
 
 /// Computes current exposure (sum of position values) for all symbols.
@@ -108,7 +167,8 @@ void execute_double_down(Position& pos, const EntryOrder& eo, const Candle& cand
 std::map<std::string, TfCandles> build_tf_data(
     size_t s, int64_t cur_ts,
     const std::map<std::string, std::vector<LoadedCandles>>& mtf_candles,
-    bool need_mtf)
+    bool need_mtf,
+    std::map<std::string, size_t>& cursor)
 {
     std::map<std::string, TfCandles> tfd;
     if (!need_mtf) return tfd;
@@ -116,30 +176,11 @@ std::map<std::string, TfCandles> build_tf_data(
         if (s >= vlc.size()) continue;
         auto const& candles = vlc[s].candles;
         if (candles.empty()) continue;
-        // Find the last CLOSED HTF candle: the one whose NEXT candle's
-        // open timestamp is <= cur_ts. If no next candle, this is the
-        // latest candle and it's still forming — use the previous one.
-        size_t last_closed = 0;
-        for (size_t j = 0; j + 1 < candles.size(); ++j) {
-            if (candles[j + 1].timestamp <= cur_ts) {
-                last_closed = j + 1;
-            } else {
-                break;
-            }
+        size_t& idx = cursor[tf];
+        while (idx + 1 < candles.size() && candles[idx + 1].timestamp <= cur_ts) {
+            ++idx;
         }
-        // last_closed now points to the latest HTF candle whose open time <= cur_ts
-        // AND whose next candle also starts before cur_ts (meaning it's closed).
-        // But if last_closed's next candle starts AFTER cur_ts, then last_closed
-        // is the forming candle — we need last_closed - 1.
-        // Actually: if candles[last_closed+1].timestamp > cur_ts, then
-        // candles[last_closed] is still forming. Use last_closed as-is only if
-        // it's the last candle in the array (edge case at end of data).
-        // Otherwise, use last_closed - 1 to get the truly closed candle.
-        // Wait — let's think more carefully:
-        // candles[last_closed].timestamp <= cur_ts (forming or just opened)
-        // candles[last_closed+1].timestamp > cur_ts (hasn't started yet)
-        // So candles[last_closed] is the FORMING candle. We want the one BEFORE it.
-        if (last_closed > 0) last_closed--;  // Use the previous (closed) candle
+        size_t last_closed = (idx > 0) ? idx - 1 : 0;
         tfd[tf] = {tf, std::span<const Candle>(candles), last_closed};
     }
     return tfd;
@@ -284,7 +325,12 @@ BacktestResult run_backtest(const Config& cfg,
     std::iota(sym_order.begin(), sym_order.end(), size_t{0});
     std::vector<double> parkinson_vol(n, 0.0);
 
+    // MTF cursor: per-symbol per-timeframe index that advances monotonically
+    std::vector<std::map<std::string, size_t>> mtf_cursors(n);
+
     for (size_t i = 0; i < nc; ++i) {
+        debug_strat_candle_count.fetch_add(1);
+
         // Gather candle pointers for this tick
         std::vector<const Candle*> current_candles(n);
         for (size_t s = 0; s < n; ++s) {
@@ -314,36 +360,39 @@ BacktestResult run_backtest(const Config& cfg,
         }
 
         // Compute Parkinson volatility for each symbol (with optional MTF)
-        auto pv_tf_it = cfg.strategy.indicator_timeframes.find("parkinson_volatility_span");
-        if (pv_tf_it != cfg.strategy.indicator_timeframes.end() && need_mtf) {
-            auto const& tf_name = pv_tf_it->second;
-            auto mtf_it = mtf_ref.find(tf_name);
-            if (mtf_it != mtf_ref.end()) {
-                for (size_t s = 0; s < n; ++s) {
-                    auto const& mtf_arr = mtf_it->second[s].candles;
-                    if (mtf_arr.empty()) {
-                        parkinson_vol[s] = 0.0;
-                        continue;
+        {
+            auto t0 = std::chrono::steady_clock::now();
+            auto pv_tf_it = cfg.strategy.indicator_timeframes.find("parkinson_volatility_span");
+            if (pv_tf_it != cfg.strategy.indicator_timeframes.end() && need_mtf) {
+                auto const& tf_name = pv_tf_it->second;
+                auto mtf_it = mtf_ref.find(tf_name);
+                if (mtf_it != mtf_ref.end()) {
+                    for (size_t s = 0; s < n; ++s) {
+                        auto const& mtf_arr = mtf_it->second[s].candles;
+                        if (mtf_arr.empty()) {
+                            parkinson_vol[s] = 0.0;
+                            continue;
+                        }
+                        int64_t cur_ts = current_candles[s]->timestamp;
+                        size_t& mtf_idx = mtf_cursors[s][tf_name];
+                        while (mtf_idx + 1 < mtf_arr.size() && mtf_arr[mtf_idx + 1].timestamp <= cur_ts) {
+                            ++mtf_idx;
+                        }
+                        parkinson_vol[s] = compute_parkinson_volatility(
+                            mtf_arr, mtf_idx, cfg.strategy.parkinson_volatility_span);
                     }
-                    int64_t cur_ts = current_candles[s]->timestamp;
-                    // Find the last MTF candle whose timestamp <= cur_ts
-                    size_t mtf_idx = 0;
-                    for (size_t j = 0; j + 1 < mtf_arr.size(); ++j) {
-                        if (mtf_arr[j + 1].timestamp <= cur_ts) mtf_idx = j + 1;
-                        else break;
-                    }
-                    parkinson_vol[s] = compute_parkinson_volatility(
-                        mtf_arr, mtf_idx, cfg.strategy.parkinson_volatility_span);
+                } else {
+                    for (size_t s = 0; s < n; ++s)
+                        parkinson_vol[s] = compute_parkinson_volatility(
+                            per_symbol_candles[s].candles, i, cfg.strategy.parkinson_volatility_span);
                 }
             } else {
                 for (size_t s = 0; s < n; ++s)
                     parkinson_vol[s] = compute_parkinson_volatility(
                         per_symbol_candles[s].candles, i, cfg.strategy.parkinson_volatility_span);
             }
-        } else {
-            for (size_t s = 0; s < n; ++s)
-                parkinson_vol[s] = compute_parkinson_volatility(
-                    per_symbol_candles[s].candles, i, cfg.strategy.parkinson_volatility_span);
+            auto t1 = std::chrono::steady_clock::now();
+            debug_strat_pv_time_ms.fetch_add(std::chrono::duration<double, std::milli>(t1 - t0).count());
         }
 
         // Sort symbols by volatility descending; stable for deterministic order
@@ -358,6 +407,18 @@ BacktestResult run_backtest(const Config& cfg,
             is_active[sym_order[static_cast<size_t>(a)]] = true;
         }
 
+        // Compute VWAP and stdev per symbol (cached for modules that need candle_series)
+        std::vector<double> vwap_values(n, 0.0);
+        std::vector<double> stdev_pop_values(n, 0.0);
+        if (need_candles) {
+            size_t const vwap_lb = static_cast<size_t>(cfg.strategy.zscore_vwap_lookback);
+            for (size_t s = 0; s < n; ++s) {
+                auto const& cs = per_symbol_candles[s].candles;
+                vwap_values[s] = compute_vwap(std::span<const Candle>(cs), i, vwap_lb);
+                stdev_pop_values[s] = compute_stdev(std::span<const Candle>(cs), i, vwap_lb);
+            }
+        }
+
         // ── Step a: CLOSES ─────────────────────────────────────────────────
         // Ask closes_algo for close orders, then execute them.
         // Step a contains ONLY take-profit closes (stop-loss/unstuck are in Step b),
@@ -365,15 +426,18 @@ BacktestResult run_backtest(const Config& cfg,
         // whenever any close order executed (qty > 0), regardless of price vs
         // avg_entry. This unblocks graduated_tp TP2/TP3 (which can fire while
         // close < avg_entry on a z-score revert) and lets time_stop disengage.
+        {
+            auto t0 = std::chrono::steady_clock::now();
         for (size_t s = 0; s < n; ++s) {
             if (positions[s].total_qty > 1e-12) {
                 double const rstd = need_stdev ? stdev_values[s] : 0.0;
                 ModuleContext ctx{cfg, symbols_info[s], *current_candles[s],
                                   positions[s], balance, static_cast<int64_t>(i),
                                   need_ema ? ema_values[s] : 0.0, rstd,
+                                  vwap_values[s], stdev_pop_values[s],
                                   need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{},
                                   i,
-                                  build_tf_data(s, current_candles[s]->timestamp, mtf_ref, need_mtf)};
+                                   build_tf_data(s, current_candles[s]->timestamp, mtf_ref, need_mtf, mtf_cursors[s])};
                 auto close_orders = closes_algo->compute_closes(ctx);
                 bool any_tp_close = false;
                 for (auto const& co : close_orders) {
@@ -399,17 +463,24 @@ BacktestResult run_backtest(const Config& cfg,
                 }
             }
         }
+            auto t1 = std::chrono::steady_clock::now();
+            debug_strat_close_calls.fetch_add(1);
+            debug_strat_close_time_ms.fetch_add(std::chrono::duration<double, std::milli>(t1 - t0).count());
+        }
 
         // ── Step b: LOSS MODULES (replaces stop_loss + unstuck) ───────────
+        {
+            auto t0 = std::chrono::steady_clock::now();
         for (size_t s = 0; s < n; ++s) {
             if (positions[s].total_qty > 1e-12) {
                 double const rstd_l = need_stdev ? stdev_values[s] : 0.0;
                 ModuleContext lctx{cfg, symbols_info[s], *current_candles[s],
                                   positions[s], balance, static_cast<int64_t>(i),
                                   need_ema ? ema_values[s] : 0.0, rstd_l,
+                                  vwap_values[s], stdev_pop_values[s],
                                   need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{},
                                   i,
-                                  build_tf_data(s, current_candles[s]->timestamp, mtf_ref, need_mtf)};
+                                   build_tf_data(s, current_candles[s]->timestamp, mtf_ref, need_mtf, mtf_cursors[s])};
                 for (auto const& lm : loss_modules) {
                     // DEFECT 1 FIX: track qty before each loss module so we can
                     // detect a partial de-risk (unstuck tranche) vs a full close.
@@ -435,6 +506,10 @@ BacktestResult run_backtest(const Config& cfg,
                 }
             }
         }
+            auto t1 = std::chrono::steady_clock::now();
+            debug_strat_loss_calls.fetch_add(1);
+            debug_strat_loss_time_ms.fetch_add(std::chrono::duration<double, std::milli>(t1 - t0).count());
+        }
 
         // ── Step c: ENTRIES ────────────────────────────────────────────────
         // C2: entry_condition->should_enter() is ONLY checked for the first
@@ -443,6 +518,15 @@ BacktestResult run_backtest(const Config& cfg,
         // prevent the martingale from averaging down on the very dip it was
         // designed to capture.
         // Liquidation floor: skip all new entries if we are bankrupt.
+        {
+            auto t0 = std::chrono::steady_clock::now();
+            // Count position candles (where modules do more work)
+            for (size_t s = 0; s < n; ++s) {
+                if (positions[s].total_qty > 1e-12) {
+                    debug_strat_position_candle_count.fetch_add(1);
+                    break;
+                }
+            }
         if (!bankrupt) {
         for (size_t s = 0; s < n; ++s) {
             if (!is_active[s]) continue;
@@ -455,13 +539,15 @@ BacktestResult run_backtest(const Config& cfg,
             ModuleContext ctx{cfg, symbols_info[s], *current_candles[s],
                               positions[s], balance, static_cast<int64_t>(i),
                               need_ema ? ema_values[s] : 0.0, rstd2,
+                              vwap_values[s], stdev_pop_values[s],
                               need_candles ? std::span<const Candle>(per_symbol_candles[s].candles) : std::span<const Candle>{},
                               i,
-                              build_tf_data(s, current_candles[s]->timestamp, mtf_ref, need_mtf)};
+                               build_tf_data(s, current_candles[s]->timestamp, mtf_ref, need_mtf, mtf_cursors[s])};
 
             if (positions[s].total_qty < 1e-12) {
                 // ── First entry ──
                 // Gate on entry_condition only here (C2 fix)
+                debug_strat_entry_condition_calls.fetch_add(1);
                 if (!entry_condition->should_enter(ctx)) continue;
                 if (total_positions >= cfg.strategy.n_positions) continue;
 
@@ -487,6 +573,10 @@ BacktestResult run_backtest(const Config& cfg,
             }
         }
         } // end if (!bankrupt)
+            auto t1 = std::chrono::steady_clock::now();
+            debug_strat_entry_calls.fetch_add(1);
+            debug_strat_entry_time_ms.fetch_add(std::chrono::duration<double, std::milli>(t1 - t0).count());
+        }
 
         // (Step d: TIME-BASED UNSTUCK removed — now handled by loss modules in Step b)
 
@@ -571,6 +661,13 @@ BacktestResult run_backtest(const Config& cfg,
             }
         }
 
+        // Periodic debug log
+        if (i % 50000 == 0 && i > 0) {
+            log_strat_stats();
+            std::fprintf(stderr, "[DEBUG] [strategy] candle %zu/%zu (%.0f%%) pos_count=%d balance=%.2f\n",
+                         i, nc, 100.0 * i / nc, total_positions, balance);
+        }
+
         // Record equity point (floored at 0 when bankrupt)
         double const exposure = bankrupt ? 0.0 : total_exposure(positions, current_candles);
         double const equity = bankrupt ? 0.0 : total_equity(balance, positions, current_candles);
@@ -620,6 +717,18 @@ BacktestResult run_backtest(const Config& cfg,
             result.position_durations_hours.push_back(hrs);
         }
     }
+
+    // ── DEBUG: summary per backtest run ──
+    std::fprintf(stderr,
+        "[DEBUG] [strategy] BACKTEST DONE: total_candles=%zu position_candles=%zu equity_points=%zu\n"
+        "[DEBUG] [strategy]   entry_cond_calls=%zu close_calls=%zu loss_calls=%zu entry_calls=%zu\n"
+        "[DEBUG] [strategy]   time_ms: pv=%.0f closes=%.0f loss=%.0f entries=%.0f\n",
+        nc, debug_strat_position_candle_count.load(),
+        result.equity_curve.size(),
+        debug_strat_entry_condition_calls.load(),
+        debug_strat_close_calls.load(), debug_strat_loss_calls.load(), debug_strat_entry_calls.load(),
+        debug_strat_pv_time_ms.load(), debug_strat_close_time_ms.load(),
+        debug_strat_loss_time_ms.load(), debug_strat_entry_time_ms.load());
 
     result.final_positions = std::move(positions);
     return result;

@@ -912,6 +912,7 @@ TEST(EmaDistPctTest, C1_EntersOnDipNotTop) {
     Candle candle_dip{0, 95.0, 96.0, 94.0, 95.0, 1000.0}; // close=95, 5% below ema=100
     ModuleContext ctx_dip{cfg, info, candle_dip, pos, /*total_balance=*/10000.0,
                          /*current_tick=*/0, /*ema=*/ema_val, /*rolling_stdev=*/0.0,
+                         /*vwap=*/0.0, /*stdev=*/0.0,
                          /*candle_series=*/{}, /*candle_series_idx=*/0, /*tf_data=*/{}};
 
     EmaDistPctEntryCondition cond;
@@ -923,6 +924,7 @@ TEST(EmaDistPctTest, C1_EntersOnDipNotTop) {
     Candle candle_top{0, 105.0, 106.0, 104.0, 105.0, 1000.0}; // close=105, 5% above ema=100
     ModuleContext ctx_top{cfg, info, candle_top, pos, /*total_balance=*/10000.0,
                          /*current_tick=*/0, /*ema=*/ema_val, /*rolling_stdev=*/0.0,
+                         /*vwap=*/0.0, /*stdev=*/0.0,
                          /*candle_series=*/{}, /*candle_series_idx=*/0, /*tf_data=*/{}};
     EXPECT_FALSE(cond.should_enter(ctx_top))
         << "C1: must NOT enter when close (" << candle_top.close
@@ -932,6 +934,7 @@ TEST(EmaDistPctTest, C1_EntersOnDipNotTop) {
     Candle candle_at{0, 100.0, 101.0, 99.0, 100.0, 1000.0};
     ModuleContext ctx_at{cfg, info, candle_at, pos, /*total_balance=*/10000.0,
                         /*current_tick=*/0, /*ema=*/ema_val, /*rolling_stdev=*/0.0,
+                        /*vwap=*/0.0, /*stdev=*/0.0,
                         /*candle_series=*/{}, /*candle_series_idx=*/0, /*tf_data=*/{}};
     EXPECT_FALSE(cond.should_enter(ctx_at))
         << "C1: must NOT enter when close == ema (not a dip)";
@@ -970,10 +973,11 @@ TEST(SimpleGridTest, M5_NoResiduaAfterLastLevel) {
 
         ModuleContext ctx{cfg, info, candle, pos, /*total_balance=*/10000.0,
                          /*current_tick=*/static_cast<int64_t>(tick), /*ema=*/price,
-                         /*rolling_stdev=*/0.0, /*candle_series=*/{},
+                         /*rolling_stdev=*/0.0,
+                         /*vwap=*/0.0, /*stdev=*/0.0, /*candle_series=*/{},
                          /*candle_series_idx=*/0, /*tf_data=*/{}};
-
-        auto orders = algo.compute_closes(ctx);
+ 
+         auto orders = algo.compute_closes(ctx);
         for (const auto& ord : orders) {
             total_closed += ord.qty;
             pos.total_qty -= ord.qty;
@@ -1151,9 +1155,10 @@ TEST(GraduatedTpTest, Defect3_TP1InLossSetsTP1Fired) {
         Candle candle{10LL * 3600000LL, 100.0, 100.5, 99.5, 100.0, 1000.0};
         ModuleContext ctx{cfg, info, candle, pos, /*total_balance=*/10000.0,
                          /*current_tick=*/10, /*ema=*/100.0, /*rolling_stdev=*/0.3,
+                         /*vwap=*/99.9, /*stdev=*/0.283,
                          std::span<const Candle>(series), /*candle_series_idx=*/9,
                          /*tf_data=*/{}};
-
+ 
         auto orders = algo.compute_closes(ctx);
         ASSERT_GT(orders.size(), 0U)
             << "DEFECT 3: graduated_tp TP1 must fire when |z|<=tp1_z_threshold "
@@ -1172,12 +1177,13 @@ TEST(GraduatedTpTest, Defect3_TP1InLossSetsTP1Fired) {
         Candle candle{11LL * 3600000LL, 100.0, 100.5, 99.5, 100.0, 1000.0};
         ModuleContext ctx{cfg, info, candle, pos, /*total_balance=*/10000.0,
                          /*current_tick=*/11, /*ema=*/100.0, /*rolling_stdev=*/0.3,
+                         /*vwap=*/99.9, /*stdev=*/0.283,
                          std::span<const Candle>(series), /*candle_series_idx=*/9,
                          /*tf_data=*/{}};
-
+ 
         auto orders = algo.compute_closes(ctx);
-        ASSERT_GT(orders.size(), 0U)
-            << "DEFECT 3: graduated_tp TP2/TP3 must fire after tp1_fired=true. "
+         ASSERT_GT(orders.size(), 0U)
+             << "DEFECT 3: graduated_tp TP2/TP3 must fire after tp1_fired=true. "
                "No orders returned — TP2/TP3 are still blocked.";
 
         double closed = 0.0;
@@ -1333,9 +1339,10 @@ TEST(GraduatedTpTest, H2_PositionFullyClosedViaTP3) {
         Candle candle{10LL * 3600000, 100.0, 100.5, 99.5, 100.0, 1000.0};
         ModuleContext ctx{cfg, info, candle, pos, /*total_balance=*/10000.0,
                          /*current_tick=*/10, /*ema=*/100.0, /*rolling_stdev=*/0.5,
+                         /*vwap=*/99.9, /*stdev=*/0.283,
                          std::span<const Candle>(series), /*candle_series_idx=*/9,
                          /*tf_data=*/{}};
-
+ 
         auto orders = algo.compute_closes(ctx);
         // Expect TP1 to fire (z <= 2.0), AND potentially TP3 fallback
         ASSERT_GT(orders.size(), 0U) << "H2: Expected at least TP1 order at tick 1";
@@ -1354,11 +1361,12 @@ TEST(GraduatedTpTest, H2_PositionFullyClosedViaTP3) {
         Candle candle{11LL * 3600000, 100.0, 100.5, 99.5, 100.0, 1000.0};
         ModuleContext ctx{cfg, info, candle, pos, /*total_balance=*/10000.0,
                          /*current_tick=*/11, /*ema=*/100.0, /*rolling_stdev=*/0.5,
+                         /*vwap=*/99.9, /*stdev=*/0.283,
                          std::span<const Candle>(series), /*candle_series_idx=*/9,
                          /*tf_data=*/{}};
-
+ 
         auto orders = algo.compute_closes(ctx);
-        ASSERT_GT(orders.size(), 0U) << "H2: Expected TP2 and/or TP3 orders at tick 2";
+         ASSERT_GT(orders.size(), 0U) << "H2: Expected TP2 and/or TP3 orders at tick 2";
 
         double tick2_closed = 0.0;
         for (const auto& ord : orders) {

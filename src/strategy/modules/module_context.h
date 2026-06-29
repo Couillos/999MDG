@@ -39,6 +39,8 @@ struct ModuleContext {
     int64_t current_tick;
     double ema;
     double rolling_stdev;
+    double vwap = 0.0;
+    double stdev = 0.0;
     std::span<const Candle> candle_series;
     size_t candle_series_idx;
     // Multi-timeframe: map of timeframe → TfCandles
