@@ -128,6 +128,7 @@ void apply_param_to_cfg(Config& cfg, const std::string& name, double value) {
     } else if (name == "time_based_unstuck_pct") {
         cfg.strategy.time_based_unstuck_pct = value;
     } else if (name == "time_based_unstuck_age") {
+        cfg.strategy.time_based_unstuck_age = static_cast<int>(value);
     } else if (name == "bb_std_mult") {
         cfg.strategy.bb_std_mult = value;
     } else if (name == "bb_min_bandwidth_pct") {
@@ -139,6 +140,7 @@ void apply_param_to_cfg(Config& cfg, const std::string& name, double value) {
     } else if (name == "overshoot_pct") {
         cfg.strategy.overshoot_pct = value;
     } else if (name == "tp_min_upnl_pct") {
+        cfg.strategy.tp_min_upnl_pct = value;
     } else if (name == "zscore_entry_threshold") {
         cfg.strategy.zscore_entry_threshold = value;
     } else if (name == "zscore_vwap_lookback") {

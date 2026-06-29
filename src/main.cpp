@@ -270,10 +270,11 @@ static void apply_params_to_cfg(Config& cfg, const std::map<std::string, double>
             cfg.strategy.atr_stop_mult = v;
         else if (k == "time_stop_hours")
             cfg.strategy.time_stop_hours = v;
-        else if (k == "atr_filter_mult")
+        else if (k == "atr_filter_mult") {
             cfg.strategy.atr_filter_mult = v;
             cfg.strategy.tp_min_upnl_pct = v;
             cfg.total_wallet_exposure = v;
+        }
     }
     // Don't recompute warmup_candles here — keep whatever was set by the caller.
     // In OPTIMIZE mode, warmup_candles was set to max_warmup from bounds (matching
