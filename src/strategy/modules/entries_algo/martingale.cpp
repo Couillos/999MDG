@@ -27,32 +27,36 @@ std::vector<EntryOrder> MartingaleEntriesAlgo::compute_entries(const ModuleConte
             orders.push_back({qty});
         }
     } else {
-        // Double-down logic
-        double const price_drop_pct = (ctx.pos.avg_entry_price - ctx.candle.close)
-                                    / ctx.pos.avg_entry_price;
-        if (price_drop_pct <= 0.0) {
-            return orders;
+        // Double-down logic: pre-calculate the full martingale ladder
+        // using recursive theoretical position averaging.
+        double const spacing = ctx.cfg.strategy.entry_grid_spacing_pct;
+        double const factor = ctx.cfg.strategy.double_down_factor;
+        double const close = ctx.candle.close;
+
+        struct Level { double trigger; double qty; };
+        std::vector<Level> ladder;
+
+        double sim_avg = ctx.pos.avg_entry_price;
+        double sim_qty = ctx.pos.total_qty;
+
+        for (int i = 0; i < 100; ++i) {
+            double const trigger = sim_avg * (1.0 - spacing);
+            double const raw_qty = sim_qty * factor;
+            double const qty = round_step(raw_qty, ctx.info.step_size);
+            if (qty < ctx.info.min_qty) break;
+            ladder.push_back({trigger, qty});
+
+            sim_qty += qty;
+            sim_avg = (sim_avg * (sim_qty - qty) + trigger * qty) / sim_qty;
         }
 
-        int const levels_filled = static_cast<int>(
-            std::floor(price_drop_pct / ctx.cfg.strategy.entry_grid_spacing_pct));
-
-        if (levels_filled < ctx.pos.entry_levels) {
-            return orders;
-        }
-
-        for (int lvl = ctx.pos.entry_levels; lvl <= levels_filled; ++lvl) {
-            double const mult = std::pow(ctx.cfg.strategy.double_down_factor,
-                                         static_cast<double>(lvl));
-            double const entry_size_usd = slot_capital
-                                        * ctx.cfg.strategy.initial_qty_pct * mult;
-            double const qty = round_step(entry_size_usd / ctx.candle.close,
-                                          ctx.info.step_size);
-
-            if (qty < ctx.info.min_qty) {
+        int const start = (std::max)(ctx.pos.entry_levels - 1, 0);
+        for (int i = start; i < static_cast<int>(ladder.size()); ++i) {
+            if (close <= ladder[i].trigger) {
+                orders.push_back({ladder[i].qty});
+            } else {
                 break;
             }
-            orders.push_back({qty});
         }
     }
 

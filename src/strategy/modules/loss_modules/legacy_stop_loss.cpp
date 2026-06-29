@@ -5,6 +5,7 @@ std::vector<CloseOrder> LegacyStopLoss::compute_loss_exits(const ModuleContext& 
     std::vector<CloseOrder> orders;
     if (std::abs(ctx.pos.total_qty) < 1e-12) return orders;
     if (ctx.pos.avg_entry_price <= 0.0) return orders;
+    if (ctx.cfg.strategy.sl_upnl_pct == 0.0) return orders;
     double const upnl = (ctx.candle.close - ctx.pos.avg_entry_price) / ctx.pos.avg_entry_price;
     // sl_upnl_pct is negative (e.g. -0.1 = -10%). Exit when upnl <= sl_upnl_pct.
     if (upnl <= ctx.cfg.strategy.sl_upnl_pct) {

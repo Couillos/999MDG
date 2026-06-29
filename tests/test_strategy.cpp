@@ -964,8 +964,8 @@ TEST(SimpleGridTest, M5_NoResiduaAfterLastLevel) {
     for (int tick = 1; tick <= cfg.strategy.close_grid_count; ++tick) {
         if (pos.total_qty < 1e-12) break;
 
-        // Price at exactly the target for level k (above avg_entry by k * spacing)
-        double const price = pos.avg_entry_price * (1.0 + static_cast<double>(tick) * cfg.strategy.close_grid_spacing_pct + 1e-6);
+        // Price at exactly the compound target for level k (prev_trigger * (1 + spacing))
+        double const price = pos.avg_entry_price * std::pow(1.0 + cfg.strategy.close_grid_spacing_pct, static_cast<double>(tick)) + 1e-6;
         Candle candle{static_cast<int64_t>(tick) * 3600000, price, price*1.001, price*0.999, price, 1000.0};
 
         ModuleContext ctx{cfg, info, candle, pos, /*total_balance=*/10000.0,

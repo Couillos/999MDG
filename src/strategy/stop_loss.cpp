@@ -9,6 +9,8 @@ bool check_stop_loss(const Config& strat, const Candle& candle, Position& pos) {
         return false;
     }
 
+    if (strat.strategy.sl_upnl_pct == 0.0) return false;
+
     double const weighted_upnl = (candle.close - pos.avg_entry_price)
                                / pos.avg_entry_price;
 

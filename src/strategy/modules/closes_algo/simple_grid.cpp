@@ -19,44 +19,40 @@ std::vector<CloseOrder> SimpleGridClosesAlgo::compute_closes(const ModuleContext
         return orders;
     }
 
-    // Track remaining quantity locally — each close reduces it so the next
-    // close sees the updated quantity. This matches the original close_grid.cpp
-    // behavior where pos.total_qty was mutated in-place during the loop.
-    double remaining_qty = ctx.pos.total_qty;
+    // Pre-calculate the full close ladder using recursive compounding,
+    // mirroring the martingale entry pattern.
+    double const spacing = ctx.cfg.strategy.close_grid_spacing_pct;
+    int const count = ctx.cfg.strategy.close_grid_count;
+    double const close = ctx.candle.close;
 
-    for (int k = 1; k <= ctx.cfg.strategy.close_grid_count; ++k) {
-        if (std::abs(remaining_qty) < 1e-12) {
-            break;  // position fully closed, stop iterating
-        }
+    struct Level { double trigger; double qty; };
+    std::vector<Level> ladder;
 
-        double const target_price = ctx.pos.avg_entry_price
-            * (1.0 + static_cast<double>(k) * ctx.cfg.strategy.close_grid_spacing_pct);
+    double const avg_entry = ctx.pos.avg_entry_price;
+    double sim_qty = ctx.pos.total_qty;
+    double prev_trigger = avg_entry;
 
-        if (ctx.candle.close < target_price) {
-            continue;
-        }
-
-        // UPnL condition: upnl >= k * close_grid_spacing_pct
-        double const upnl = (ctx.candle.close - ctx.pos.avg_entry_price) / ctx.pos.avg_entry_price;
-        if (upnl < static_cast<double>(k) * ctx.cfg.strategy.close_grid_spacing_pct) {
-            continue;
-        }
-
-        double close_qty;
-        if (k == ctx.cfg.strategy.close_grid_count) {
-            // Last grid level: sweep the entire remaining qty so no dust is left.
-            // round_step can under-close due to rounding, leaving a permanent residual
-            // that the engine's 1e-12 guard will never flush.
-            close_qty = remaining_qty;
+    for (int k = 1; k <= count; ++k) {
+        double const trigger = prev_trigger * (1.0 + spacing);
+        double raw_qty;
+        if (k == count) {
+            raw_qty = sim_qty;
         } else {
-            close_qty = round_step(remaining_qty
-                / static_cast<double>(ctx.cfg.strategy.close_grid_count), ctx.info.step_size);
-            close_qty = std::min(close_qty, remaining_qty);
+            raw_qty = sim_qty * (1.0 / static_cast<double>(count));
         }
+        double qty = round_step(raw_qty, ctx.info.step_size);
+        qty = std::min(qty, sim_qty);
+        if (qty < ctx.info.min_qty) break;
+        ladder.push_back({trigger, qty});
+        sim_qty -= qty;
+        prev_trigger = trigger;
+    }
 
-        if (close_qty > 1e-12) {
-            orders.push_back({close_qty});
-            remaining_qty -= close_qty;  // decrement local copy
+    for (auto const& level : ladder) {
+        if (close >= level.trigger) {
+            orders.push_back({level.qty});
+        } else {
+            break;
         }
     }
 

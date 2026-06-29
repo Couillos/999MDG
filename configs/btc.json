@@ -15,35 +15,35 @@
     "entries_algo": {
       "martingale": {
         "entry_grid_spacing_pct": 0.03,
-        "double_down_factor": 0.5
+        "double_down_factor": 0.2
       }
     },
     "closes_algo": {
       "simple_grid": {
-        "close_grid_spacing_pct": 0.002,
+        "close_grid_spacing_pct": 0.0002,
         "close_grid_count": 5
       }
     },
     "initial_qty_pct": 0.03,
-    "sl_upnl_pct": -0.9,
+    "sl_upnl_pct": 0,
     "n_positions": 1,
     "parkinson_volatility_span": 12,
     "maker_fee_pct": 0.001,
-    "time_based_unstuck_pct": 0.2,
-    "time_based_unstuck_age": 168
+    "time_based_unstuck_pct": 0.05,
+    "time_based_unstuck_age": 336
   },
   "optimize": {
     "n_workers": 10,
     "max_iterations": 100000,
       "limits": {
-	  "loss_profit_ratio": {"max": 0.2},
+	  "loss_profit_ratio": {"min": 1.0},
 	  "drawdown_worst": {"max": 0.5},
 	  "position_held_hours_max": {"max": 1250}
       },
     "scoring": [
       {"metric": "sharpe_ratio_usd", "goal": "max", "weight": 1.0},
       {"metric": "calmar_ratio_usd", "goal": "max", "weight": 1.0},
-      {"metric": "adg_usd", "goal": "max", "weight": 1.0},
+      {"metric": "adg_usd", "goal": "max", "weight": 1.0}
     ],
     "ga": {
       "population_size": 1000,
@@ -74,7 +74,7 @@
         }
       },
       "initial_qty_pct": [0.01, 0.03, 0.001],
-      "sl_upnl_pct": [0.05, 0.9, 0.05],
+      "sl_upnl_pct": [-0.9, -0.01, 0.01],
       "n_positions": [1, 1],
       "parkinson_volatility_span": [2, 24, 1],
       "time_based_unstuck_pct": [0.15, 0.3, 0.05],
