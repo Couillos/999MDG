@@ -69,9 +69,7 @@ cd build && ctest
 
 ## Output
 
-Results go under the directory specified by `output.dir` in the config (default: `results/`).
-
-### Backtest output: `results/YYYY-MM-DD_HH-MM-SS/`
+### Backtest output: `backtests/YYYY-MM-DD_HH-MM-SS/`
 
 | File | Contents |
 |---|---|
@@ -85,7 +83,7 @@ Results go under the directory specified by `output.dir` in the config (default:
 
 Charts are generated via **gnuplot** with a dark theme. Requires `gnuplot` on the system (see `scripts/install_gnuplot.sh`).
 
-### Optimizer output: `results/optimize/YYYY-MM-DD_HH-MM-SS/`
+### Optimizer output: `optimization_results/YYYY-MM-DD_HH-MM-SS/`
 
 | File | Contents |
 |---|---|
