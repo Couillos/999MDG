@@ -610,8 +610,8 @@ OptimizeConfig parse_optimize(simdjson::ondemand::object opt, StrategyParams& sp
             if (field.unescaped_key().get(key)) continue;
             std::string key_str(key);
 
-            // Check if this is a module block (entry_condition/entries_algo/closes_algo)
-            if (key_str == "entry_condition" || key_str == "entries_algo" || key_str == "closes_algo") {
+            // Check if this is a module block
+            if (key_str == "entry_condition" || key_str == "entries_algo" || key_str == "closes_algo" || key_str == "loss_algo") {
                 simdjson::ondemand::object module_obj;
                 if (field.value().get_object().get(module_obj)) continue;
 
@@ -635,6 +635,17 @@ OptimizeConfig parse_optimize(simdjson::ondemand::object opt, StrategyParams& sp
                         std::fprintf(stderr, "Config error: bounds.closes_algo method '%s' does not match strategy.closes_algo '%s'\n",
                             method.c_str(), sp.closes_algo_type.c_str());
                         std::exit(1);
+                    }
+                    if (key_str == "loss_algo") {
+                        bool found = false;
+                        for (auto const& lm : sp.loss_algo_types) {
+                            if (lm == method) { found = true; break; }
+                        }
+                        if (!found) {
+                            std::fprintf(stderr, "Config error: bounds.loss_algo method '%s' is not configured in strategy.loss_algo\n",
+                                method.c_str());
+                            std::exit(1);
+                        }
                     }
 
                     // Parse the params inside the method

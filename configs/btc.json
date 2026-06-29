@@ -25,12 +25,9 @@
       }
     },
     "initial_qty_pct": 0.03,
-    "sl_upnl_pct": 0,
     "n_positions": 1,
     "parkinson_volatility_span": 12,
     "maker_fee_pct": 0.001,
-    "time_based_unstuck_pct": 0.05,
-    "time_based_unstuck_age": 336,
     "loss_algo": {
       "legacy_stop_loss": {
         "sl_upnl_pct": 0
@@ -82,12 +79,18 @@
           "close_grid_count": [1, 5, 1]
         }
       },
+      "loss_algo": {
+        "legacy_stop_loss": {
+          "sl_upnl_pct": [-0.9, -0.01, 0.01]
+        },
+        "legacy_unstuck": {
+          "time_based_unstuck_pct": [0.15, 0.3, 0.05],
+          "time_based_unstuck_age": [72, 168, 24]
+        }
+      },
       "initial_qty_pct": [0.01, 0.03, 0.001],
-      "sl_upnl_pct": [-0.9, -0.01, 0.01],
       "n_positions": [1, 1],
-      "parkinson_volatility_span": [2, 24, 1],
-      "time_based_unstuck_pct": [0.15, 0.3, 0.05],
-      "time_based_unstuck_age": [72, 168, 24]
+      "parkinson_volatility_span": [2, 24, 1]
     }
   },
   "output": {"dir": "results"}
