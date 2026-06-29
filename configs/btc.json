@@ -1,7 +1,7 @@
 {
   "symbols": ["BTCUSDT"],
   "timeframe": "1h",
-  "date_from": "2020-01-01",
+  "date_from": "2021-07-01",
   "date_to": "2025-06-26",
   "initial_balance_usd": 10000.0,
   "total_wallet_exposure": 1.0,
@@ -75,7 +75,7 @@
         }
       },
       "initial_qty_pct": [0.01, 0.03, 0.001],
-      "sl_upnl_pct": [-0.5, -0.001, 0.01],
+      "sl_upnl_pct": [-0.9, -0.001, 0.01],
       "n_positions": [1, 1],
       "parkinson_volatility_span": [1, 24, 1],
       "time_based_unstuck_pct": [0.15, 0.3, 0.05],
